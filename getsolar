@@ -21,9 +21,9 @@ start()
     fi
  fi
  if [ $DEBUG ] ; then
-   $RUNFILE -d -D -i $DEVICE_ADDRESS
+   $RUNFILE -d -D -T 5 -i $DEVICE_ADDRESS
  else
-   $RUNFILE -d -i $DEVICE_ADDRESS
+   $RUNFILE -d -T 5 -i $DEVICE_ADDRESS
  fi
  exit $?
     
