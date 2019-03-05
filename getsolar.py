@@ -216,7 +216,7 @@ def rmPidFile():
 def getSolaredge(sd):
 
     global lastProductionEnergy,lastImportEnergy,lastExportEnergy
-    maxretries=10
+    maxRetries=10
 
     if sd is not None:
 
@@ -232,7 +232,7 @@ def getSolaredge(sd):
                     logging.critical("Sunspec: Too many retries. Giving up")
                     rmPidFile()
                     sys.exit(4)
-                logging.info("Sunspec: {} - {}. Retrying".format(client.SunspecClientError, e))
+                logging.info("Sunspec: {} - {}. Retrying".format(client.SunSpecClientError, e))
                 time.sleep(30)
                 continue
 #            except client.SunSpecClientError, e:
