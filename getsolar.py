@@ -156,12 +156,12 @@ loadTopic= "house/solaredge/power/load"
 # Initialise Influxdb data object
 influxUser = 'telegraf'
 influxPassword = 'critchet'
-influxDBname = 'home_assistant'
+influxDBAll = 'home_assistant'
+influxDBPower = 'powerlogging'
 influxDBuser = 'telegraf'
 influxDBuser_password='critchet'
 influxHost = 'localhost'
 influxPort=8086
-influxMeasure='Wh'
 influxDomain='solaredge'
 influxEntity='meters'
 
@@ -213,7 +213,7 @@ def rmPidFile():
     if os.path.exists(pidFile):
         os.remove(pidFile)
 
-def getSolaredge(sd):
+def getSolaredge(sd,cycle):
 
     global lastProductionEnergy,lastImportEnergy,lastExportEnergy
     maxRetries=10
@@ -321,42 +321,65 @@ def getSolaredge(sd):
         powerLoad=powerProduction-powerExport+powerImport
         deltaConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy+deltaImportEnergy
         deltaSelfConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy
-        md.publish(powerTopic,powerProduction/1000)
-        md.publish(exportTopic,powerExport/1000)
-        md.publish(importTopic,powerImport/1000)
-        md.publish(loadTopic,powerLoad/1000)
 
-        # Write energy values to influx
-        influx_metric = [{
-            'measurement': influxMeasure,
-            'time': timeStamp,
-            'tags': {
-                'domain': influxDomain,
-                'entity_id':influxEntity 
-            },
-            'fields': {
-                 'Production': deltaProductionEnergy,
-                 'Import': deltaImportEnergy,
-                 'Export': deltaExportEnergy,
-                 'Consumption': deltaConsumptionEnergy,
-                 'Self-Consumption': deltaSelfConsumptionEnergy
-            }
-        }]
+        if cycle == 0:
+            md.publish(powerTopic,powerProduction/1000)
+            md.publish(exportTopic,powerExport/1000)
+            md.publish(importTopic,powerImport/1000)
+            md.publish(loadTopic,powerLoad/1000)
 
-        dd.write_points(influx_metric,time_precision='s')
+            # Write energy values to influx
+            influxMeasure='Wh'
+            influx_metric = [{
+                'measurement': influxMeasure,
+                'time': timeStamp,
+                'tags': {
+                    'domain': influxDomain,
+                    'entity_id':influxEntity 
+                },
+                'fields': {
+                     'Production': deltaProductionEnergy,
+                     'Import': deltaImportEnergy,
+                     'Export': deltaExportEnergy,
+                     'Consumption': deltaConsumptionEnergy,
+                     'Self-Consumption': deltaSelfConsumptionEnergy
+                }
+            }]
 
-        # Print published values
+            dd.write_points(influx_metric,time_precision='s')
 
-        logging.info("Published values:")
-        logging.info("Power Production: {}".format(powerProduction))
-        logging.info("Power Export: {}".format(powerExport))
-        logging.info("Power Import: {}".format(powerImport))
-        logging.info("Power Load: {}".format(powerLoad))
-        logging.info("Current Energy Production: {}".format(deltaProductionEnergy))
-        logging.info("Current Energy Export: {}".format(deltaExportEnergy))
-        logging.info("Current Energy Import: {}".format(deltaImportEnergy))
-        logging.info("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
-        logging.info("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
+            # Print published values
+
+            logging.info("Published values:")
+            logging.info("Power Production: {}".format(powerProduction))
+            logging.info("Power Export: {}".format(powerExport))
+            logging.info("Power Import: {}".format(powerImport))
+            logging.info("Power Load: {}".format(powerLoad))
+            logging.info("Current Energy Production: {}".format(deltaProductionEnergy))
+            logging.info("Current Energy Export: {}".format(deltaExportEnergy))
+            logging.info("Current Energy Import: {}".format(deltaImportEnergy))
+            logging.info("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
+            logging.info("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
+        else:
+            # Write power values to influx
+            influxMeasure='W'
+            influx_metric = [{
+                'measurement': influxMeasure,
+                'time': timeStamp,
+                'tags': {
+                    'domain': influxDomain,
+                    'entity_id':influxEntity 
+                },
+                'fields': {
+                     'Production': powerProduction,
+                     'Import': powerExport,
+                     'Export': powerImport,
+                     'Load': powerLoad
+                }
+            }]
+
+            dp.write_points(influx_metric,time_precision='s')
+        
 
 
 if __name__ == "__main__":
@@ -460,7 +483,8 @@ if __name__ == "__main__":
     md.connect(mqttHost,mqttPort)
     md.loop_start()
 
-    dd = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBname)
+    dd = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBAll)
+    dp = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBPower)
 
     # Setup 'last' energy counters
 
@@ -472,6 +496,8 @@ if __name__ == "__main__":
         lastExportEnergy=point['Export']
         lastImportEnergy=point['Import']
 
+    cycle=0
+    sleepTime=10
     while True:
         if sd is not None:
             if args.D:
@@ -479,8 +505,11 @@ if __name__ == "__main__":
             else:
                 # Read registers
                 pass
-                data=getSolaredge(sd)
-            time.sleep(60)
+                data=getSolaredge(sd,cycle)
+                cycle+=1
+                if cycle > 5:
+                    cycle=0
+            time.sleep(sleepTime)
         else:
             break
 
