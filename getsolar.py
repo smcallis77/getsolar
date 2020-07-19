@@ -156,12 +156,12 @@ loadTopic= "house/solaredge/power/load"
 # Initialise Influxdb data object
 influxUser = 'telegraf'
 influxPassword = 'critchet'
-influxDBname = 'home_assistant'
+influxDBAll = 'home_assistant'
+influxDBPower = 'powerlogging'
 influxDBuser = 'telegraf'
 influxDBuser_password='critchet'
 influxHost = 'localhost'
 influxPort=8086
-influxMeasure='Wh'
 influxDomain='solaredge'
 influxEntity='meters'
 
@@ -213,7 +213,7 @@ def rmPidFile():
     if os.path.exists(pidFile):
         os.remove(pidFile)
 
-def getSolaredge(sd):
+def getSolaredge(sd,cycle):
 
     global lastProductionEnergy,lastImportEnergy,lastExportEnergy
     maxRetries=10
@@ -221,40 +221,14 @@ def getSolaredge(sd):
     if sd is not None:
 
         # read all models in the device
-        retry=0
-        while True:
-            retry+=1
-            try:
-                sd.read()
-            except client.SunSpecClientError, e:
-                # Retry on read timeout
-                if retry > maxRetries:
-                    logging.critical("Sunspec: Too many retries. Giving up")
-                    rmPidFile()
-                    sys.exit(4)
-                logging.info("Sunspec: {} - {}. Retrying".format(client.SunSpecClientError, e))
-                time.sleep(30)
-                continue
-#            except client.SunSpecClientError, e:
-#                logging.critical("Sunspec: {} - {}. Exiting".format(client.SunSpecClientError, e))
-#                rmPidFile()
-#                sys.exit(2)
-#            except modbus.client.ModbusClientTimeout, e:
-#                # Retry on read timeout
-#                if retry > maxRetries:
-#                    logging.critical("Modbus: Too many retries. Giving up")
-#                    rmPidFile()
-#                    sys.exit(4)
-#                logging.info("Modbus: {} - {}. Retrying".format(modbus.client.ModbusClientTimeout, e))
-#                time.sleep(30)
-#                continue
-#            except modbus.client.ModbusClientError, e:
-#                logging.critical("Modbus: {} - {}. Exiting".format(modbus.client.ModbusClientError, e))
-#                rmPidFile()
-#                sys.exit(3)
-            break
+        try:
+            sd.read()
+        except client.SunSpecClientError, e:
+            # Retry on read timeout
+            logging.error("Sunspec: {} - {}.".format(client.SunSpecClientError, e))
+            return
         timeStamp=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-        logging.info( 'Timestamp: %s' % (timeStamp))
+        #logging.info( 'Timestamp: %s' % (timeStamp))
 
         powerProduction=0.0
         powerImport=0.0
@@ -295,7 +269,7 @@ def getSolaredge(sd):
                                         value = '0x%08x' % (point.value)
                                     else:
                                         value = str(point.value).rstrip('\0')
-                                    logging.info('%-40s %20s %-10s' % (label, value, str(units)))
+                                    #logging.info('%-40s %20s %-10s' % (label, value, str(units)))
                                     if point.addr == "40083":
                                         # Publish current production power
                                         powerProduction=float(value)
@@ -306,27 +280,62 @@ def getSolaredge(sd):
                                         else:
                                             powerImport=float(value)*-1.0
                                             powerExport=float(0)
-                                    elif point.addr == "40093":
-                                        deltaProductionEnergy=float(value)-lastProductionEnergy
-                                        lastProductionEnergy=float(value)
-                                    elif point.addr == "40234":
-                                        deltaImportEnergy=float(value)-lastImportEnergy
-                                        lastImportEnergy=float(value)
-                                    elif point.addr == "40226":
-                                        deltaExportEnergy=float(value)-lastExportEnergy
-                                        lastExportEnergy=float(value)
+                                    if cycle == 0:
+                                        if point.addr == "40093":
+                                            deltaProductionEnergy=float(value)-lastProductionEnergy
+                                            lastProductionEnergy=float(value)
+                                        elif point.addr == "40234":
+                                            deltaImportEnergy=float(value)-lastImportEnergy
+                                            lastImportEnergy=float(value)
+                                        elif point.addr == "40226":
+                                            deltaExportEnergy=float(value)-lastExportEnergy
+                                            lastExportEnergy=float(value)
                     else:
                         logging.error("Register {} not found".format(point.addr))
         # Derive values
         powerLoad=powerProduction-powerExport+powerImport
-        deltaConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy+deltaImportEnergy
-        deltaSelfConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy
-        md.publish(powerTopic,powerProduction/1000)
-        md.publish(exportTopic,powerExport/1000)
-        md.publish(importTopic,powerImport/1000)
-        md.publish(loadTopic,powerLoad/1000)
 
-        # Write energy values to influx
+        if cycle == 0:
+            deltaConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy+deltaImportEnergy
+            deltaSelfConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy
+            md.publish(powerTopic,powerProduction/1000)
+            md.publish(exportTopic,powerExport/1000)
+            md.publish(importTopic,powerImport/1000)
+            md.publish(loadTopic,powerLoad/1000)
+
+            # Write energy values to influx
+            influxMeasure='Wh'
+            influx_metric = [{
+                'measurement': influxMeasure,
+                'time': timeStamp,
+                'tags': {
+                    'domain': influxDomain,
+                    'entity_id':influxEntity 
+                },
+                'fields': {
+                     'Production': deltaProductionEnergy,
+                     'Import': deltaImportEnergy,
+                     'Export': deltaExportEnergy,
+                     'Consumption': deltaConsumptionEnergy,
+                     'Self-Consumption': deltaSelfConsumptionEnergy
+                }
+            }]
+
+            dd.write_points(influx_metric,time_precision='s')
+
+            # Print published values
+
+            logging.info("Power Production: {}".format(powerProduction))
+            logging.info("Power Export: {}".format(powerExport))
+            logging.info("Power Import: {}".format(powerImport))
+            logging.info("Power Load: {}".format(powerLoad))
+            logging.info("Current Energy Production: {}".format(deltaProductionEnergy))
+            logging.info("Current Energy Export: {}".format(deltaExportEnergy))
+            logging.info("Current Energy Import: {}".format(deltaImportEnergy))
+            logging.info("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
+            logging.info("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
+        # Write power values to influx
+        influxMeasure='W'
         influx_metric = [{
             'measurement': influxMeasure,
             'time': timeStamp,
@@ -335,28 +344,15 @@ def getSolaredge(sd):
                 'entity_id':influxEntity 
             },
             'fields': {
-                 'Production': deltaProductionEnergy,
-                 'Import': deltaImportEnergy,
-                 'Export': deltaExportEnergy,
-                 'Consumption': deltaConsumptionEnergy,
-                 'Self-Consumption': deltaSelfConsumptionEnergy
+                 'Production': powerProduction,
+                 'Import': powerImport,
+                 'Export': powerExport,
+                 'Load': powerLoad
             }
         }]
 
-        dd.write_points(influx_metric,time_precision='s')
-
-        # Print published values
-
-        logging.info("Published values:")
-        logging.info("Power Production: {}".format(powerProduction))
-        logging.info("Power Export: {}".format(powerExport))
-        logging.info("Power Import: {}".format(powerImport))
-        logging.info("Power Load: {}".format(powerLoad))
-        logging.info("Current Energy Production: {}".format(deltaProductionEnergy))
-        logging.info("Current Energy Export: {}".format(deltaExportEnergy))
-        logging.info("Current Energy Import: {}".format(deltaImportEnergy))
-        logging.info("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
-        logging.info("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
+        dp.write_points(influx_metric,time_precision='s')
+        
 
 
 if __name__ == "__main__":
@@ -434,33 +430,13 @@ if __name__ == "__main__":
             sys.exit(1)
         writePidFile()
 
-    try:
-        if args.t == 'tcp':
-            sd = client.SunSpecClientDevice(client.TCP, args.a, ipaddr=args.i, ipport=args.P, timeout=args.T)
-        elif args.t == 'rtu':
-            sd = client.SunSpecClientDevice(client.RTU, args.a, name=args.p, baudrate=args.b, timeout=args.T)
-        elif args.t == 'mapped':
-            sd = client.SunSpecClientDevice(client.MAPPED, args.a, name=args.m)
-        else:
-            logging.critical('Unknown -t option: %s' % (args.t))
-            rmPidFile()
-            sys.exit(1)
-
-    except client.SunSpecClientError, e:
-        logging.critical('Sunspec: %s' % (e))
-        rmPidFile()
-        sys.exit(2)
-    except modbus.client.ModbusClientError, e:
-        logging.critical('Modbus: %s' % (e))
-        rmPidFile()
-        sys.exit(3)
-
     md = mqtt.Client(mqttClientName)
     md.username_pw_set(mqttUsername,mqttPassword)
     md.connect(mqttHost,mqttPort)
     md.loop_start()
 
-    dd = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBname)
+    dd = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBAll)
+    dp = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBPower)
 
     # Setup 'last' energy counters
 
@@ -472,15 +448,50 @@ if __name__ == "__main__":
         lastExportEnergy=point['Export']
         lastImportEnergy=point['Import']
 
-    while True:
+    cycle=0
+    sleepTime=10
+    waitTime=1
+    retry=5
+    while retry != 0:
+        try:
+            logging.info("Sunspec: Opening client")
+            if args.t == 'tcp':
+                sd = client.SunSpecClientDevice(client.TCP, args.a, ipaddr=args.i, ipport=args.P, timeout=args.T)
+            elif args.t == 'rtu':
+                sd = client.SunSpecClientDevice(client.RTU, args.a, name=args.p, baudrate=args.b, timeout=args.T)
+            elif args.t == 'mapped':
+                sd = client.SunSpecClientDevice(client.MAPPED, args.a, name=args.m)
+            else:
+                logging.critical('Unknown -t option: %s' % (args.t))
+                rmPidFile()
+                sys.exit(1)
+            retry=5
+
+        except client.SunSpecClientError, e:
+            logging.error('Sunspec: %s' % (e))
+            retry-=1
+            sd=None
+            time.sleep(waitTime)
+        except modbus.client.ModbusClientError, e:
+            logging.error('Modbus: %s' % (e))
+            retry-=1
+            sd=None
+            time.sleep(waitTime)
+
         if sd is not None:
             if args.D:
                 print("Running in debug mode. Not reading any data")
             else:
                 # Read registers
                 pass
-                data=getSolaredge(sd)
-            time.sleep(60)
-        else:
-            break
+                data=getSolaredge(sd,cycle)
+                cycle+=1
+                if cycle > 5:
+                    cycle=0
+            logging.info("Sunspec: Closing client")
+            sd.close()
+            time.sleep(sleepTime)
+    logging.error("Too many retries")
+    rmPidFile()
+    sys.exit(2)
 
