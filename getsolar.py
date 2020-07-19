@@ -9,9 +9,7 @@
 import sys
 import os
 import time
-import sunspec.core.client as client
-import sunspec.core.modbus as modbus
-import sunspec.core.suns as suns
+import solaredge_modbus
 import argparse
 import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
@@ -152,6 +150,8 @@ powerTopic= "house/solaredge/power/production"
 exportTopic= "house/solaredge/power/export"
 importTopic= "house/solaredge/power/import"
 loadTopic= "house/solaredge/power/load"
+inverterTopic="house/solaredge/inverter/state"
+meterTopic="house/solaredge/meter/state"
 
 # Initialise Influxdb data object
 influxUser = 'telegraf'
@@ -167,9 +167,11 @@ influxEntity='meters'
 
 # Initialise syslog settings
 
-_id = 'Solar Datalogger'
-logStr = 'debug'
+_id = 'Solar Datalogger V3'
+logStr = 'info'
 logFacilityLocalN = 1
+sleepTime=10
+waitTime=1
 
 # Initialise other settings
 pidFile = '/var/run/getsolar/getsolar.pid'
@@ -188,10 +190,10 @@ class SysLogLibHandler(logging.Handler):
         """ Pre. (0 <= n <= 7) """
         try:
             syslog.openlog(logoption=syslog.LOG_PID, facility=self.FACILITY[n])
-        except Exception , err:
+        except Exception as err:
             try:
                 syslog.openlog(syslog.LOG_PID, self.FACILITY[n])
-            except Exception, err:
+            except Exception as err:
                 try:
                     syslog.openlog('my_ident', syslog.LOG_PID, self.FACILITY[n])
                 except:
@@ -213,7 +215,7 @@ def rmPidFile():
     if os.path.exists(pidFile):
         os.remove(pidFile)
 
-def getSolaredge(sd,cycle):
+def getSolaredge(sd=None,cycle=None,debug=False):
 
     global lastProductionEnergy,lastImportEnergy,lastExportEnergy
     maxRetries=10
@@ -221,138 +223,115 @@ def getSolaredge(sd,cycle):
     if sd is not None:
 
         # read all models in the device
-        try:
-            sd.read()
-        except client.SunSpecClientError, e:
-            # Retry on read timeout
-            logging.error("Sunspec: {} - {}.".format(client.SunSpecClientError, e))
-            return
-        timeStamp=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-        #logging.info( 'Timestamp: %s' % (timeStamp))
+        retry=5
+        while retry > 0:
+            try:
+                iData=sd.read_all()
+                meter1=sd.meters()["Meter1"]
+                mData=meter1.read_all()
 
-        powerProduction=0.0
-        powerImport=0.0
-        powerExport=0.0
-        powerLoad=0.0
-        for model in sd.device.models_list:
-            if model.model_type.label:
-                label = '%s (%s)' % (model.model_type.label, str(model.id))
-            else:
-                label = '(%s)' % (str(model.id))
-            # print('\nmodel: %s\n' % (label))
-            for block in model.blocks:
-                if block.index > 0:
-                  index = '%02d:' % (block.index)
+                powerProduction=iData['power_ac']*10**iData['power_ac_scale']
+                if mData['power'] > 0:
+                    powerExport=mData['power']*10**mData['power_scale']
+                    powerImport=0.0
                 else:
-                  index = '   '
-                for point in block.points_list:
-                    if point.addr in readRegister: 
-                        # print("Found a register {}, action = {}".format(point.addr,readRegister[point.addr]))
-                        if readRegister[point.addr].startswith("discard"):
-                            pass
-                            # print("Register {} discarded".format(point.addr))
-                        else:
-                            if readRegister[point.addr].startswith("test"):
-                                logging.debug("Now processing a point {}".format(point))
-                            else:
-                                if point.value is not None:
-                                    if point.point_type.label:
-                                        label = '   %s%s (%s):' % (index, point.point_type.label, point.point_type.id)
-                                    else:
-                                        label = '   %s(%s):' % (index, point.point_type.id)
-                                    units = point.point_type.units
-                                    if units is None:
-                                        units = ''
-                                    if point.point_type.type == suns.SUNS_TYPE_BITFIELD16:
-                                        value = '0x%04x' % (point.value)
-                                    elif point.point_type.type == suns.SUNS_TYPE_BITFIELD32:
-                                        value = '0x%08x' % (point.value)
-                                    else:
-                                        value = str(point.value).rstrip('\0')
-                                    #logging.info('%-40s %20s %-10s' % (label, value, str(units)))
-                                    if point.addr == "40083":
-                                        # Publish current production power
-                                        powerProduction=float(value)
-                                    elif point.addr == "40206":
-                                        if float(value) > 0:
-                                            powerExport=float(value)
-                                            powerImport=float(0)
-                                        else:
-                                            powerImport=float(value)*-1.0
-                                            powerExport=float(0)
-                                    if cycle == 0:
-                                        if point.addr == "40093":
-                                            deltaProductionEnergy=float(value)-lastProductionEnergy
-                                            lastProductionEnergy=float(value)
-                                        elif point.addr == "40234":
-                                            deltaImportEnergy=float(value)-lastImportEnergy
-                                            lastImportEnergy=float(value)
-                                        elif point.addr == "40226":
-                                            deltaExportEnergy=float(value)-lastExportEnergy
-                                            lastExportEnergy=float(value)
+                    powerImport=-1.0*mData['power']*10**mData['power_scale']
+                    powerExport=0.0
+            except Exception as err:
+                # Retry on read exception
+                logging.info("Register read error - retrying")
+                retry-=1
+                time.sleep(waitTime)
+            else:
+                retry=0
+                # logging.info( 'Timestamp: %s' % (timeStamp))
+                timeStamp=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                if cycle == 0:
+                    deltaProductionEnergy=iData['energy_total']*10**iData['energy_total_scale']-lastProductionEnergy
+                    lastProductionEnergy=iData['energy_total']*10**iData['energy_total_scale']
+                    deltaImportEnergy=mData['import_energy_active']*10**mData['energy_active_scale']-lastImportEnergy
+                    lastImportEnergy=mData['import_energy_active']*10**mData['energy_active_scale']
+                    deltaExportEnergy=mData['export_energy_active']*10**mData['energy_active_scale']-lastExportEnergy
+                    lastExportEnergy=mData['export_energy_active']*10**mData['energy_active_scale']
+                # Derive values
+                powerLoad=powerProduction-powerExport+powerImport
+
+                if cycle == 0:
+                    deltaConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy+deltaImportEnergy
+                    deltaSelfConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy
+                    # Write energy values to influx
+                    influxMeasure='Wh'
+                    influx_metric = [{
+                        'measurement': influxMeasure,
+                        'time': timeStamp,
+                        'tags': {
+                            'domain': influxDomain,
+                            'entity_id':influxEntity 
+                        },
+                        'fields': {
+                             'Production': deltaProductionEnergy,
+                             'Import': deltaImportEnergy,
+                             'Export': deltaExportEnergy,
+                             'Consumption': deltaConsumptionEnergy,
+                             'Self-Consumption': deltaSelfConsumptionEnergy
+                        }
+                    }]
+                    if (not debug):
+
+                        logging.info("Publishing data")
+                        logging.info("{}".format(iData))
+                        logging.info("{}".format(mData))
+                        #md.publish(powerTopic,powerProduction/1000)
+                        #md.publish(exportTopic,powerExport/1000)
+                        #md.publish(importTopic,powerImport/1000)
+                        #md.publish(loadTopic,powerLoad/1000)
+                        md.publish(inverterTopic,"{}".format(iData))
+                        md.publish(meterTopic,"{}".format(mData))
+
+                        #dd.write_points(influx_metric,time_precision='s')
+
+                        # Print published values
+
+                        logging.info("Power Production: {}".format(powerProduction))
+                        logging.info("Power Export: {}".format(powerExport))
+                        logging.info("Power Import: {}".format(powerImport))
+                        logging.info("Power Load: {}".format(powerLoad))
+                        logging.info("Current Energy Production: {}".format(deltaProductionEnergy))
+                        logging.info("Current Energy Export: {}".format(deltaExportEnergy))
+                        logging.info("Current Energy Import: {}".format(deltaImportEnergy))
+                        logging.info("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
+                        logging.info("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
                     else:
-                        logging.error("Register {} not found".format(point.addr))
-        # Derive values
-        powerLoad=powerProduction-powerExport+powerImport
+                        logging.debug("Power Production: {}".format(powerProduction))
+                        logging.debug("Power Export: {}".format(powerExport))
+                        logging.debug("Power Import: {}".format(powerImport))
+                        logging.debug("Power Load: {}".format(powerLoad))
+                        logging.debug("Current Energy Production: {}".format(deltaProductionEnergy))
+                        logging.debug("Current Energy Export: {}".format(deltaExportEnergy))
+                        logging.debug("Current Energy Import: {}".format(deltaImportEnergy))
+                        logging.debug("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
+                        logging.debug("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
+                # Write power values to influx
+                influxMeasure='W'
+                influx_metric = [{
+                    'measurement': influxMeasure,
+                    'time': timeStamp,
+                    'tags': {
+                        'domain': influxDomain,
+                        'entity_id':influxEntity 
+                    },
+                    'fields': {
+                         'Production': powerProduction,
+                         'Import': powerImport,
+                         'Export': powerExport,
+                         'Load': powerLoad
+                    }
+                }]
+                if (not debug):
 
-        if cycle == 0:
-            deltaConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy+deltaImportEnergy
-            deltaSelfConsumptionEnergy=deltaProductionEnergy-deltaExportEnergy
-            md.publish(powerTopic,powerProduction/1000)
-            md.publish(exportTopic,powerExport/1000)
-            md.publish(importTopic,powerImport/1000)
-            md.publish(loadTopic,powerLoad/1000)
-
-            # Write energy values to influx
-            influxMeasure='Wh'
-            influx_metric = [{
-                'measurement': influxMeasure,
-                'time': timeStamp,
-                'tags': {
-                    'domain': influxDomain,
-                    'entity_id':influxEntity 
-                },
-                'fields': {
-                     'Production': deltaProductionEnergy,
-                     'Import': deltaImportEnergy,
-                     'Export': deltaExportEnergy,
-                     'Consumption': deltaConsumptionEnergy,
-                     'Self-Consumption': deltaSelfConsumptionEnergy
-                }
-            }]
-
-            dd.write_points(influx_metric,time_precision='s')
-
-            # Print published values
-
-            logging.info("Power Production: {}".format(powerProduction))
-            logging.info("Power Export: {}".format(powerExport))
-            logging.info("Power Import: {}".format(powerImport))
-            logging.info("Power Load: {}".format(powerLoad))
-            logging.info("Current Energy Production: {}".format(deltaProductionEnergy))
-            logging.info("Current Energy Export: {}".format(deltaExportEnergy))
-            logging.info("Current Energy Import: {}".format(deltaImportEnergy))
-            logging.info("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
-            logging.info("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
-        # Write power values to influx
-        influxMeasure='W'
-        influx_metric = [{
-            'measurement': influxMeasure,
-            'time': timeStamp,
-            'tags': {
-                'domain': influxDomain,
-                'entity_id':influxEntity 
-            },
-            'fields': {
-                 'Production': powerProduction,
-                 'Import': powerImport,
-                 'Export': powerExport,
-                 'Load': powerLoad
-            }
-        }]
-
-        dp.write_points(influx_metric,time_precision='s')
-        
+                    pass
+                    #dp.write_points(influx_metric,time_precision='s')
+                
 
 
 if __name__ == "__main__":
@@ -432,7 +411,7 @@ if __name__ == "__main__":
 
     md = mqtt.Client(mqttClientName)
     md.username_pw_set(mqttUsername,mqttPassword)
-    md.connect(mqttHost,mqttPort)
+    md.connect(mqttHost,int(mqttPort))
     md.loop_start()
 
     dd = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBAll)
@@ -449,48 +428,45 @@ if __name__ == "__main__":
         lastImportEnergy=point['Import']
 
     cycle=0
-    sleepTime=10
-    waitTime=1
     retry=5
     while retry != 0:
-        try:
-            logging.info("Sunspec: Opening client")
-            if args.t == 'tcp':
-                sd = client.SunSpecClientDevice(client.TCP, args.a, ipaddr=args.i, ipport=args.P, timeout=args.T)
-            elif args.t == 'rtu':
-                sd = client.SunSpecClientDevice(client.RTU, args.a, name=args.p, baudrate=args.b, timeout=args.T)
-            elif args.t == 'mapped':
-                sd = client.SunSpecClientDevice(client.MAPPED, args.a, name=args.m)
-            else:
-                logging.critical('Unknown -t option: %s' % (args.t))
-                rmPidFile()
-                sys.exit(1)
+        logging.info("Modbus: Opening client")
+        if args.t == 'tcp':
+            try:
+                sd = solaredge_modbus.Inverter(host=args.i, port=args.P)
+            except Exception as err:
+                print("Opening")
+                print(Exception)
+                print(err)
+        elif args.t == 'rtu':
+            sd = solaredge_modbus.Inverter(device=args.p, baud=args.b)
+        else:
+            logging.critical('Unknown -t option: %s' % (args.t))
+            rmPidFile()
+            sys.exit(1)
+        if sd.connected():
             retry=5
-
-        except client.SunSpecClientError, e:
-            logging.error('Sunspec: %s' % (e))
-            retry-=1
-            sd=None
-            time.sleep(waitTime)
-        except modbus.client.ModbusClientError, e:
-            logging.error('Modbus: %s' % (e))
-            retry-=1
-            sd=None
-            time.sleep(waitTime)
-
-        if sd is not None:
             if args.D:
-                print("Running in debug mode. Not reading any data")
+                #print("Running in debug mode. Not writing any data")
+                # Read registers
+                logging.info("Running in debug mode, not writing data")
+                logging.info("Reading data - cycle {}".format(cycle))
+                data=getSolaredge(sd,cycle,True)
             else:
                 # Read registers
-                pass
+                logging.info("Reading data - cycle {}".format(cycle))
                 data=getSolaredge(sd,cycle)
-                cycle+=1
-                if cycle > 5:
-                    cycle=0
-            logging.info("Sunspec: Closing client")
-            sd.close()
+            cycle+=1
+            if cycle > 5:
+                cycle=0
+            #logging.info("Sunspec: Closing client")
+            # Close the connection (TODO)
+            # sd.close()
             time.sleep(sleepTime)
+        else:
+            logging.info('Connect failed - retrying')
+            retry-=1
+            time.sleep(waitTime)
     logging.error("Too many retries")
     rmPidFile()
     sys.exit(2)
