@@ -18,6 +18,9 @@ from influxdb import InfluxDBClient
 import logging
 import syslog
 import json
+import keyring.backend
+from keyrings.alt.file import PlaintextKeyring
+
 
 
 
@@ -148,7 +151,6 @@ mqttClientName = "getsolar"
 mqttHost = "ha.smcallister.org"
 mqttPort = "1883"
 mqttUsername = "homecontrol"
-mqttPassword = "Cr44tchet$"
 powerTopic= "house/solaredge/power/production"
 exportTopic= "house/solaredge/power/export"
 importTopic= "house/solaredge/power/import"
@@ -158,11 +160,8 @@ meterTopic="house/solaredge/meter/state"
 
 # Initialise Influxdb data object
 influxUser = 'telegraf'
-influxPassword = 'critchet'
 influxDBAll = 'home_assistant'
 influxDBPower = 'powerlogging'
-influxDBuser = 'telegraf'
-influxDBuser_password='critchet'
 influxHost = 'localhost'
 influxPort=8086
 influxDomain='solaredge'
@@ -346,8 +345,13 @@ def getSolaredge(sd=None,cycle=None,debug=False):
 
 if __name__ == "__main__":
 
-    # Last published energy counters
 
+    # Get the passwords from the plain text keyring
+    keyring.set_keyring(PlaintextKeyring())
+    mqttPassword=keyring.get_password(mqttHost,mqttUsername)
+    influxPassword=keyring.get_password(influxHost,influxUser)
+
+    # Last published energy counters
     lastProductionEnergy=0.0
     lastImportEnergy=0.0
     lastExportEnergy=0.0
