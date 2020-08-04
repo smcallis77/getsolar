@@ -1,30 +1,18 @@
 #!/usr/bin/env python3
 
-# getsolar.py v1.1 20-July-2020
+# getsolar.py v1.2 30-July-2020
 
 """
   Copyright (c) 2018, Steve McAllister
   All Rights Reserved
 
-"""
+Connects to a solaredge inverter extracts data and writes to two influx databases.
 
-import sys
-import os
-import time
-import solaredge_modbus
-import argparse
-import paho.mqtt.client as mqtt
-from influxdb import InfluxDBClient
-import logging
-import syslog
-import json
-import keyring.backend
-from keyrings.alt.file import PlaintextKeyring
+Database 1 - homeassistant(HA) DB writes important sensor data for homeassistant
+             approximately once per minute
+Database 2 - powerlogging DB - writes a smaller amount of data more frequently
+             for analysis of 'AC Load'
 
-
-
-
-"""
   Original suns options:
       -t: transport type: tcp or rtu (default: tcp)
       -a: modbus slave address (default: 1)
@@ -37,9 +25,7 @@ from keyrings.alt.file import PlaintextKeyring
       -d: run as a daemon
       -D: debug mode (do not read any data)
 
-"""
-
-readRegister={
+Solaredge Reister Details
     "40004": "discard - Manufacturer",
     "40020": "discard - Model",
     "40036": "discard - EMPTY",
@@ -145,38 +131,57 @@ readRegister={
     "40288": "discard",
     "40290": "discard",
     "40293": "discard - Event Bits"
-}
 
-mqttClientName = "getsolar"
-mqttHost = "ha.smcallister.org"
-mqttPort = "1883"
-mqttUsername = "homecontrol"
-powerTopic= "house/solaredge/power/production"
-exportTopic= "house/solaredge/power/export"
-importTopic= "house/solaredge/power/import"
-loadTopic= "house/solaredge/power/load"
-inverterTopic="house/solaredge/inverter/state"
-meterTopic="house/solaredge/meter/state"
+Changelog.
+
+v1.2 - update code to comply with pylint coding standards
+
+"""
+
+import sys
+import os
+import time
+import logging
+import syslog
+import json
+import argparse
+import solaredge_modbus
+import paho.mqtt.client as mqtt
+from influxdb import InfluxDBClient
+import keyring.backend
+from keyrings.alt.file import PlaintextKeyring
+
+
+MQTT_CLIENT_NAME = "getsolar"
+MQTT_HOST = "ha.smcallister.org"
+MQTT_PORT = "1883"
+MQTT_USER = "homecontrol"
+POWER_TOPIC = "house/solaredge/power/production"
+EXPORT_TOPIC = "house/solaredge/power/export"
+IMPORT_TOPIC = "house/solaredge/power/import"
+LOAD_TOPIC = "house/solaredge/power/load"
+INVERTER_TOPIC = "house/solaredge/inverter/state"
+METER_TOPIC = "house/solaredge/meter/state"
 
 # Initialise Influxdb data object
-influxUser = 'telegraf'
-influxDBAll = 'home_assistant'
-influxDBPower = 'powerlogging'
-influxHost = 'localhost'
-influxPort=8086
-influxDomain='solaredge'
-influxEntity='meters'
+INFLUX_USER = 'telegraf'
+INFLUX_DB_ALL = 'home_assistant'
+INFLUX_DB_POWER = 'powerlogging'
+INFLUX_HOST = 'localhost'
+INFLUX_PORT = 8086
+INFLUX_DOMAIN = 'solaredge'
+INFLUX_ENTITY = 'meters'
 
 # Initialise syslog settings
 
-_id = 'getsolar v1.1'
-logStr = 'info'
-logFacilityLocalN = 1
-sleepTime=10
-waitTime=1
+_ID = 'getsolar v1.1'
+LOG_FACILITY_LOCAL_N = 1
+SLEEP_TIME = 10
+WAIT_TIME = 1
+MAX_RETRIES = 5
 
 # Initialise other settings
-pidFile = '/var/run/getsolar/getsolar.pid'
+PID_FILE = '/var/run/getsolar/getsolar.pid'
 
 class SysLogLibHandler(logging.Handler):
     """A logging handler that emits messages to syslog.syslog."""
@@ -197,7 +202,7 @@ class SysLogLibHandler(logging.Handler):
                 syslog.openlog(syslog.LOG_PID, self.FACILITY[n])
             except Exception as err:
                 try:
-                    syslog.openlog('my_ident', syslog.LOG_PID, self.FACILITY[n])
+                    syslog.openlog('my_IDent', syslog.LOG_PID, self.FACILITY[n])
                 except:
                     raise
         # We got it
@@ -207,200 +212,184 @@ class SysLogLibHandler(logging.Handler):
         syslog.syslog(self.format(record))
 
 
-def writePidFile():
+def write_pid_file():
+    """
+    Writes a file containing the current process id
+    """
     pid = str(os.getpid())
-    f = open(pidFile, 'w')
-    f.write(pid)
-    f.close()
+    _f = open(PID_FILE, 'w')
+    _f.write(pid)
+    _f.close()
 
-def rmPidFile():
-    if os.path.exists(pidFile):
-        os.remove(pidFile)
+def rm_pid_file():
+    """
+    Deletes the file containing the current process id
+    """
+    if os.path.exists(PID_FILE):
+        os.remove(PID_FILE)
 
-def getSolaredge(sd=None,cycle=None,debug=False):
+def get_solaredge(s_d, m_d, d_d, d_p, cycle, energy_last, debug=False):
 
-    global lastProductionEnergy,lastImportEnergy,lastExportEnergy
-    maxRetries=10
+    """
+    Reads data from the inverter and decodes the required values
+    """
 
-    if sd is not None:
 
-        # read all models in the device
-        retry=5
-        while retry > 0:
-            logging.debug("Trying. Cycle={}, Retry={}".format(cycle,retry))
-            try:
-                iData=sd.read_all()
-                meter1=sd.meters()["Meter1"]
-                mData=meter1.read_all()
+    # read all models in the device
+    retry = MAX_RETRIES
+    while retry > 0:
+        logging.debug("Trying. Cycle= %s, Retry= %s", cycle, retry)
+        try:
+            inv_data = s_d.read_all()
+            meter1 = s_d.meters()["Meter1"]
+            meter_data = meter1.read_all()
 
-                powerProduction=float(iData['power_ac']*10**iData['power_ac_scale'])
-                if mData['power'] > 0:
-                    powerExport=float(mData['power']*10**mData['power_scale'])
-                    powerImport=0.0
-                else:
-                    powerImport=float(-1.0*mData['power']*10**mData['power_scale'])
-                    powerExport=0.0
-            except Exception as err:
-                # Retry on read exception
-                logging.debug(err)
-                logging.info("Register read error - retrying")
-                retry-=1
-                time.sleep(waitTime)
+            power_prod = float(inv_data['power_ac']*10**inv_data['power_ac_scale'])
+            if meter_data['power'] > 0:
+                power_exp = float(meter_data['power']*10**meter_data['power_scale'])
+                power_imp = 0.0
             else:
-                retry=0
-                timeStamp=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-                logging.debug( 'Timestamp: %s' % (timeStamp))
-                if cycle == 0:
-                    deltaProductionEnergy=float(iData['energy_total']*10**iData['energy_total_scale']-lastProductionEnergy)
-                    lastProductionEnergy=float(iData['energy_total']*10**iData['energy_total_scale'])
-                    deltaImportEnergy=float(mData['import_energy_active']*10**mData['energy_active_scale']-lastImportEnergy)
-                    lastImportEnergy=float(mData['import_energy_active']*10**mData['energy_active_scale'])
-                    deltaExportEnergy=float(mData['export_energy_active']*10**mData['energy_active_scale']-lastExportEnergy)
-                    lastExportEnergy=float(mData['export_energy_active']*10**mData['energy_active_scale'])
+                power_imp = float(-1.0*meter_data['power']*10**meter_data['power_scale'])
+                power_exp = 0.0
+        except Exception as err:
+            # Retry on read exception
+            logging.debug(err)
+            logging.info("Register read error - retrying")
+            retry -= 1
+            time.sleep(WAIT_TIME)
+        else:
+            retry = 0
+            timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            logging.debug('Timestamp: %s', timestamp)
+            if cycle == 0:
+                prod_energy_delta = \
+                    float(inv_data['energy_total']*10**inv_data['energy_total_scale']- energy_last['production'])
+                imp_energy_delta = \
+                    float(meter_data['import_energy_active']*10**meter_data['energy_active_scale'] \
+                          - energy_last['import'])
+                exp_energy_delta = \
+                    float(meter_data['export_energy_active']*10**meter_data['energy_active_scale'] \
+                          -energy_last['export'])
                 # Derive values
-                powerLoad=float(powerProduction-powerExport+powerImport)
+            power_load = float(power_prod-power_exp+power_imp)
 
-                if cycle == 0:
-                    deltaConsumptionEnergy=float(deltaProductionEnergy-deltaExportEnergy+deltaImportEnergy)
-                    deltaSelfConsumptionEnergy=float(deltaProductionEnergy-deltaExportEnergy)
-                    # Write energy values to influx
-                    influxMeasure='Wh'
-                    influx_metric = [{
-                        'measurement': influxMeasure,
-                        'time': timeStamp,
-                        'tags': {
-                            'domain': influxDomain,
-                            'entity_id':influxEntity 
-                        },
-                        'fields': {
-                             'Production': deltaProductionEnergy,
-                             'Import': deltaImportEnergy,
-                             'Export': deltaExportEnergy,
-                             'Consumption': deltaConsumptionEnergy,
-                             'Self-Consumption': deltaSelfConsumptionEnergy
-                        }
-                    }]
-                    if (not debug):
-
-                        # Decode inverter status
-                        iData['status']=solaredge_modbus.INVERTER_STATUS_MAP[iData['status']]
-                        logging.debug("Publishing data")
-                        md.publish(powerTopic,powerProduction/1000)
-                        md.publish(exportTopic,powerExport/1000)
-                        md.publish(importTopic,powerImport/1000)
-                        md.publish(loadTopic,powerLoad/1000)
-                        md.publish(inverterTopic,json.dumps(iData))
-                        md.publish(meterTopic,json.dumps(mData))
-
-                        logging.debug(deltaProductionEnergy)
-                        logging.debug(deltaImportEnergy)
-                        logging.debug(deltaExportEnergy)
-                        logging.debug(deltaConsumptionEnergy)
-                        logging.debug(deltaSelfConsumptionEnergy)
-                        dd.write_points(influx_metric,time_precision='s')
-
-                        # Print published values
-
-                        logging.info("Power Production: {}".format(powerProduction))
-                        logging.info("Power Export: {}".format(powerExport))
-                        logging.info("Power Import: {}".format(powerImport))
-                        logging.info("Power Load: {}".format(powerLoad))
-                        logging.info("Current Energy Production: {}".format(deltaProductionEnergy))
-                        logging.info("Current Energy Export: {}".format(deltaExportEnergy))
-                        logging.info("Current Energy Import: {}".format(deltaImportEnergy))
-                        logging.info("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
-                        logging.info("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
-                    else:
-                        logging.debug("Power Production: {}".format(powerProduction))
-                        logging.debug("Power Export: {}".format(powerExport))
-                        logging.debug("Power Import: {}".format(powerImport))
-                        logging.debug("Power Load: {}".format(powerLoad))
-                        logging.debug("Current Energy Production: {}".format(deltaProductionEnergy))
-                        logging.debug("Current Energy Export: {}".format(deltaExportEnergy))
-                        logging.debug("Current Energy Import: {}".format(deltaImportEnergy))
-                        logging.debug("Current Energy Consumption: {}".format(deltaConsumptionEnergy))
-                        logging.debug("Current Energy Self Consumption: {}".format(deltaSelfConsumptionEnergy))
-                # Write power values to influx
-                influxMeasure='W'
+            if cycle == 0:
+                cons_energy_delta = float(prod_energy_delta-exp_energy_delta+imp_energy_delta)
+                s_cons_energy_delta = float(prod_energy_delta-exp_energy_delta)
+                # Write energy values to influx
+                influx_measure = 'Wh'
                 influx_metric = [{
-                    'measurement': influxMeasure,
-                    'time': timeStamp,
+                    'measurement': influx_measure,
+                    'time': timestamp,
                     'tags': {
-                        'domain': influxDomain,
-                        'entity_id':influxEntity 
+                        'domain': INFLUX_DOMAIN,
+                        'entity_ID':INFLUX_ENTITY
                     },
                     'fields': {
-                         'Production': powerProduction,
-                         'Import': powerImport,
-                         'Export': powerExport,
-                         'Load': powerLoad
+                        'Production': prod_energy_delta,
+                        'Import': imp_energy_delta,
+                        'Export': exp_energy_delta,
+                        'Consumption': cons_energy_delta,
+                        'Self-Consumption': s_cons_energy_delta
                     }
                 }]
-                if (not debug):
-                    pass
-                    logging.debug("Writing power points")
-                    dp.write_points(influx_metric,time_precision='s')
-                
+                # Decode inverter status
+                inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[inv_data['status']]
+                if not debug:
+                    m_d.publish(POWER_TOPIC, power_prod/1000)
+                    m_d.publish(EXPORT_TOPIC, power_exp/1000)
+                    m_d.publish(IMPORT_TOPIC, power_imp/1000)
+                    m_d.publish(LOAD_TOPIC, power_load/1000)
+                    m_d.publish(INVERTER_TOPIC, json.dumps(inv_data))
+                    m_d.publish(METER_TOPIC, json.dumps(meter_data))
+
+                    d_d.write_points(influx_metric, time_precision='s')
+
+                else:
+                        # Print published values
+
+                    logging.debug("Publishing data")
+                    logging.debug("Power - Production: %s, Export: %s, Import: %s, Load: %s", \
+                        power_prod, power_exp, power_imp, power_load)
+                    logging.debug( \
+                        "Energy  - Production: %s, Export: %s, Import: %s, Consumption: %s, Self Consumption: %s", \
+                        prod_energy_delta, \
+                        exp_energy_delta, \
+                        imp_energy_delta, \
+                        cons_energy_delta, \
+                        s_cons_energy_delta)
+            # Write power values to influx
+            influx_measure = 'W'
+            influx_metric = [{
+                'measurement': influx_measure,
+                'time': timestamp,
+                'tags': {
+                    'domain': INFLUX_DOMAIN,
+                    'entity_ID':INFLUX_ENTITY
+                },
+                'fields': {
+                    'Production': power_prod,
+                    'Import': power_imp,
+                    'Export': power_exp,
+                    'Load': power_load
+                }
+            }]
+            if not debug:
+                logging.debug("Writing power points")
+                d_p.write_points(influx_metric, time_precision='s')
+            return float(inv_data['energy_total']*10**inv_data['energy_total_scale']), \
+                   float(meter_data['import_energy_active']*10**meter_data['energy_active_scale']), \
+                   float(meter_data['export_energy_active']*10**meter_data['energy_active_scale'])
 
 
-if __name__ == "__main__":
+def parse_args():
+    """
+        configure valid arguments
+    """
 
-
-    # Get the passwords from the plain text keyring
-    keyring.set_keyring(PlaintextKeyring())
-    mqttPassword=keyring.get_password(mqttHost,mqttUsername)
-    influxPassword=keyring.get_password(influxHost,influxUser)
-
-    # Last published energy counters
-    lastProductionEnergy=0.0
-    lastImportEnergy=0.0
-    lastExportEnergy=0.0
-
-    parser = argparse.ArgumentParser(description='Get solar performance data from a sunspec compliant inverter')
-    parser.add_argument('-t', metavar=' ',
-                      default='tcp',
-                      help='transport type: rtu, tcp, mapped [default: tcp]')
-    parser.add_argument('-a', metavar=' ', type=int,
-                      default=1,
-                      help='modbus slave address [default: 1]')
-    parser.add_argument('-i', metavar=' ',
-                      default='localhost',
-                      help='ip address to use for modbus tcp [default: localhost]')
-    parser.add_argument('-P', metavar=' ', type=int,
-                      default=502,
-                      help='port number for modbus tcp [default: 502]')
-    parser.add_argument('-p', metavar=' ',
-                      default='/dev/ttyUSB0',
-                      help='serial port for modbus rtu [default: /dev/ttyUSB0]')
-    parser.add_argument('-b', metavar=' ',
-                      default=9600,
-                      help='baud rate for modbus rtu [default: 9600]')
-    parser.add_argument('-T', metavar=' ', type=float,
-                      default=2.0,
-                      help='timeout, in seconds (can be fractional, such as 1.5) [default: 2.0]')
-    parser.add_argument('-m', metavar=' ',
-                      help='modbus map file')
-    parser.add_argument('-d', action="store_true",
-                      help='run as a daemon')
-    parser.add_argument('-D', action="store_true",
-                      help='run in debug mode')
+    parser = argparse.ArgumentParser(description='Get solar performance data from a solaredge inverter')
     args = parser.parse_args()
+    parser.add_argument('-t', metavar=' ',
+                        default='tcp',
+                        help='transport type: rtu, tcp, mapped [default: tcp]')
+    parser.add_argument('-a', metavar=' ', type=int,
+                        default=1,
+                        help='modbus slave address [default: 1]')
+    parser.add_argument('-i', metavar=' ',
+                        default='localhost',
+                        help='ip address to use for modbus tcp [default: localhost]')
+    parser.add_argument('-P', metavar=' ', type=int,
+                        default=502,
+                        help='port number for modbus tcp [default: 502]')
+    parser.add_argument('-p', metavar=' ',
+                        default='/dev/ttyUSB0',
+                        help='serial port for modbus rtu [default: /dev/ttyUSB0]')
+    parser.add_argument('-b', metavar=' ',
+                        default=9600,
+                        help='baud rate for modbus rtu [default: 9600]')
+    parser.add_argument('-T', metavar=' ', type=float,
+                        default=2.0,
+                        help='timeout, in seconds (can be fractional, such as 1.5) [default: 2.0]')
+    parser.add_argument('-m', metavar=' ',
+                        help='modbus map file')
+    parser.add_argument('-D', action="store_true",
+                        help='run in debug mode')
+    print(args)
+    return args
 
-    if args.D:
-        logStr='debug'
-    # Setup logging
+def set_logging(log_str):
     # Defines a logging level and logging format based on a given string key.
-    LOG_ATTR = {'debug': (logging.DEBUG,
-                          _id + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'),
+    log_attr = {'debug': (logging.DEBUG,
+                          _ID + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'),
                 'info': (logging.INFO,
-                         _id + ' %(levelname)-9s %(message)s'),
+                         _ID + ' %(levelname)-9s %(message)s'),
                 'warning': (logging.WARNING,
-                            _id + ' %(levelname)-9s %(message)s'),
+                            _ID + ' %(levelname)-9s %(message)s'),
                 'error': (logging.ERROR,
-                          _id + ' %(levelname)-9s %(message)s'),
+                          _ID + ' %(levelname)-9s %(message)s'),
                 'critical': (logging.CRITICAL,
-                             _id + ' %(levelname)-9s %(message)s')}
-    loglevel, logformat = LOG_ATTR[logStr]
+                             _ID + ' %(levelname)-9s %(message)s')}
+    loglevel, logformat = log_attr[log_str]
 
     # Configuring the logger
     logger = logging.getLogger()
@@ -412,91 +401,118 @@ if __name__ == "__main__":
     # Setting formaters and adding handlers.
     formatter = logging.Formatter(logformat)
     handlers = []
-    handlers.append(SysLogLibHandler(logFacilityLocalN))
-    for h in handlers:
-        h.setFormatter(formatter)
-        logger.addHandler(h)
+    handlers.append(SysLogLibHandler(LOG_FACILITY_LOCAL_N))
+    for handle in handlers:
+        handle.setFormatter(formatter)
+        logger.addHandler(handle)
+
+
+def main():
+    """
+    Main processing loop
+    """
+
+    # Get the passwords from the plain text keyring
+    keyring.set_keyring(PlaintextKeyring())
+    mqtt_password = keyring.get_password(MQTT_HOST, MQTT_USER)
+    influx_password = keyring.get_password(INFLUX_HOST, INFLUX_USER)
+
+    # Initialise last published energy counters
+    energy_last = {'production': 0.0, 'import': 0.0, 'export': 0.0}
+
+    args = parse_args()
+
+    print(args)
+    if args.D:
+        set_logging('debug')
+        debug = True
+    else:
+        set_logging('info')
+        debug = False
+    # Setup logging
 
     # if running as a daemon, record the PID
-    if args.d:
-        if os.path.isfile(pidFile):
-            logging.error("PID already exists. Is getsolar already running? Remove {} if it is not".format(pidFile))
-            rmPidFile()
-            sys.exit(1)
-        writePidFile()
+    try:
+        write_pid_file()
+    except Exception as err:
+        print(err)
+#    if os.path.isfile(PID_FILE):
+#        logging.error("PID already exists. Is getsolar already running? Remove %s if it is not", \
+#            PID_FILE)
+#        rm_pid_file()
+#        sys.exit(1)
 
-    md = mqtt.Client(mqttClientName)
-    md.username_pw_set(mqttUsername,mqttPassword)
-    md.connect(mqttHost,int(mqttPort))
-    md.loop_start()
+    m_d = mqtt.Client(MQTT_CLIENT_NAME)
+    m_d.username_pw_set(MQTT_USER, mqtt_password)
+    m_d.connect(MQTT_HOST, int(MQTT_PORT))
+    m_d.loop_start()
 
-    dd = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBAll)
-    dp = InfluxDBClient(influxHost,influxPort,influxUser,influxPassword,influxDBPower)
+    d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, influx_password, INFLUX_DB_ALL)
+    d_p = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, influx_password, INFLUX_DB_POWER)
 
     # Setup 'last' energy counters
 
-    result=dd.query('select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
-    logging.debug("Result: {}".format(result.raw))
-    points=result.get_points()
+    result = d_d.query('select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
+    logging.debug("Result: %s", result.raw)
+    points = result.get_points()
     for point in points:
-        lastProductionEnergy=point['Production']
-        lastExportEnergy=point['Export']
-        lastImportEnergy=point['Import']
+        energy_last['production'] = point['Production']
+        energy_last['export'] = point['Export']
+        energy_last['import'] = point['Import']
 
-    cycle=0
-    retry=5
+    cycle = 0
+    retry = MAX_RETRIES
     logging.info("Modbus: Opening client")
     if args.t == 'tcp':
         try:
-            sd = solaredge_modbus.Inverter(host=args.i, port=args.P)
+            s_d = solaredge_modbus.Inverter(host=args.i, port=args.P)
         except Exception as err:
             logging.debug("Opening")
             logging.debug(Exception)
             logging.debug(err)
     elif args.t == 'rtu':
-        sd = solaredge_modbus.Inverter(device=args.p, baud=args.b)
+        s_d = solaredge_modbus.Inverter(device=args.p, baud=args.b)
     else:
-        logging.critical('Unknown -t option: %s' % (args.t))
-        rmPidFile()
+        logging.critical('Unknown -t option: %s', args.t)
+        rm_pid_file()
         sys.exit(1)
     while retry != 0:
-        if sd.connected():
-            retry=5
-            if args.D:
-                # Read registers
-                logging.debug("Running in debug mode, not writing data")
-                logging.debug("Reading data - cycle {}".format(cycle))
-                data=getSolaredge(sd,cycle,True)
-            else:
-                # Read registers
-                logging.debug("Reading data - cycle {}".format(cycle))
-                data=getSolaredge(sd,cycle)
-            cycle+=1
+        if s_d.connected():
+            retry = MAX_RETRIES
+            # Read registers
+            logging.debug("Running in debug mode, not writing data")
+            logging.debug("Reading data - cycle %s", cycle)
+#            energy_last['production'], energy_last['export'], energy_last['import'] = \
+#                get_solaredge(s_d, m_d, d_d, d_p, cycle, energy_last, debug)
+            cycle += 1
             if cycle > 5:
-                cycle=0
+                cycle = 0
             #logging.info("Sunspec: Closing client")
             # Close the connection (TODO)
-            #sd.close()
-            time.sleep(sleepTime)
+            #s_d.close()
+            time.sleep(SLEEP_TIME)
         else:
             logging.info('Connect failed - retrying')
-            retry-=1
-            time.sleep(waitTime)
+            retry -= 1
+            time.sleep(WAIT_TIME)
             logging.info("Modbus: Opening client")
             if args.t == 'tcp':
                 try:
-                    sd = solaredge_modbus.Inverter(host=args.i, port=args.P)
+                    s_d = solaredge_modbus.Inverter(host=args.i, port=args.P)
                 except Exception as err:
                     logging.debug("Opening")
                     logging.debug(Exception)
                     logging.debug(err)
             elif args.t == 'rtu':
-                sd = solaredge_modbus.Inverter(device=args.p, baud=args.b)
+                s_d = solaredge_modbus.Inverter(device=args.p, baud=args.b)
             else:
-                logging.critical('Unknown -t option: %s' % (args.t))
-                rmPidFile()
+                logging.critical('Unknown -t option: %s', args.t)
+                rm_pid_file()
                 sys.exit(1)
     logging.error("Too many retries")
-    rmPidFile()
+    rm_pid_file()
     sys.exit(2)
 
+
+if __name__ == "__main__":
+    main()
