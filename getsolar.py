@@ -13,19 +13,15 @@ Database 1 - homeassistant(HA) DB writes important sensor data for homeassistant
 Database 2 - powerlogging DB - writes a smaller amount of data more frequently
              for analysis of 'AC Load'
 
-  Original suns options:
+  options:
       -t: transport type: tcp or rtu (default: tcp)
-      -a: modbus slave address (default: 1)
       -i: ip address to use for modbus tcp (default: localhost)
       -P: port number for modbus tcp (default: 502)
       -p: serial port for modbus rtu (default: /dev/ttyUSB0)
       -b: baud rate for modbus rtu (default: 9600)
-      -T: timeout, in seconds (can be fractional, such as 1.5; default: 2.0)
-      -m: specify model file
-      -d: run as a daemon
       -D: debug mode (do not read any data)
 
-Solaredge Reister Details
+Solaredge Register Details
     "40004": "discard - Manufacturer",
     "40020": "discard - Model",
     "40036": "discard - EMPTY",
@@ -171,20 +167,30 @@ INFLUX_HOST = 'localhost'
 INFLUX_PORT = 8086
 INFLUX_DOMAIN = 'solaredge'
 INFLUX_ENTITY = 'meters'
+INFLUX_PASSWORD = ''
 
 # Initialise syslog settings
 
-_ID = 'getsolar v1.1'
+VERSION = 'v1.2'
+_ID = 'getsolar ' + VERSION
 LOG_FACILITY_LOCAL_N = 1
+
+# Initialise globals
+
 SLEEP_TIME = 10
 WAIT_TIME = 1
 MAX_RETRIES = 5
-
-# Initialise other settings
+MAX_COUNTER = 5
 PID_FILE = '/var/run/getsolar/getsolar.pid'
+DEBUG = False
 
 class SysLogLibHandler(logging.Handler):
     """A logging handler that emits messages to syslog.syslog."""
+
+    # pylint: disable=broad-except
+    # broad exception is reasonable in this case as
+
+
     FACILITY = [syslog.LOG_LOCAL0,
                 syslog.LOG_LOCAL1,
                 syslog.LOG_LOCAL2,
@@ -197,10 +203,10 @@ class SysLogLibHandler(logging.Handler):
         """ Pre. (0 <= n <= 7) """
         try:
             syslog.openlog(logoption=syslog.LOG_PID, facility=self.FACILITY[n])
-        except Exception as err:
+        except Exception:
             try:
                 syslog.openlog(syslog.LOG_PID, self.FACILITY[n])
-            except Exception as err:
+            except Exception:
                 try:
                     syslog.openlog('my_IDent', syslog.LOG_PID, self.FACILITY[n])
                 except:
@@ -211,6 +217,165 @@ class SysLogLibHandler(logging.Handler):
     def emit(self, record):
         syslog.syslog(self.format(record))
 
+
+class InverterData():
+    """
+    This class is used to hold data read from the inverter
+    """
+    # pylint: disable=too-many-instance-attributes
+    # Eleven is reasonable in this case.
+
+
+    def __init__(self):
+
+        self.timestamp = ""
+        self.power_prod = 0.0
+        self.power_imp = 0.0
+        self.power_exp = 0.0
+        self.power_load = 0.0
+
+        self.energy_prod_delta = 0.0
+        self.energy_imp_delta = 0.0
+        self.energy_exp_delta = 0.0
+
+        self.inv_data = {}
+        self.meter_data = {}
+        d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_ALL)
+        # Setup 'last' energy counters
+        # Energy data over an interval = current data - last recorded data
+
+        result = d_d.query('select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
+        logging.debug("Result: %s", result.raw)
+        points = result.get_points()
+        for point in points:
+            self.energy_prod = point['Production']
+            self.energy_exp = point['Export']
+            self.energy_imp = point['Import']
+
+    def update(self, s_d):
+        """
+        Read inverter registers
+        """
+        # pylint: disable=broad-except
+        # broad exception is reasonable in this case as exceptions are not inherited from the class pymodbus
+        # by solaredge_modbus
+
+        retry = MAX_RETRIES
+
+        while retry > 0:
+            logging.debug("Trying. Retry= %s", retry)
+            try:
+                self.inv_data = s_d.read_all()
+                meter1 = s_d.meters()["Meter1"]
+                self.meter_data = meter1.read_all()
+
+            except Exception:
+                # Retry on read exception
+                logging.warning("Register read error - retrying")
+                retry -= 1
+                time.sleep(WAIT_TIME)
+            else:
+                retry = 0
+
+                # Update power data
+
+                self.power_prod = float(self.inv_data['power_ac']*10**self.inv_data['power_ac_scale'])
+                if self.meter_data['power'] > 0:
+                    self.power_exp = float(self.meter_data['power']*10**self.meter_data['power_scale'])
+                    self.power_imp = 0.0
+                else:
+                    self.power_imp = float(-1.0*self.meter_data['power']*10**self.meter_data['power_scale'])
+                    self.power_exp = 0.0
+                self.power_load = float(self.power_prod-self.power_exp+self.power_imp)
+                self.timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                logging.debug('Timestamp: %s', self.timestamp)
+
+                # Update energy data
+
+                self.energy_prod_delta = \
+                    float(self.inv_data['energy_total']*10**self.inv_data['energy_total_scale']- self.energy_prod)
+                self.energy_imp_delta =  \
+                    float(self.meter_data['import_energy_active']*10**self.meter_data['energy_active_scale'] \
+                          - self.energy_imp)
+                self.energy_exp_delta =  \
+                    float(self.meter_data['export_energy_active']*10**self.meter_data['energy_active_scale'] \
+                          -self.energy_exp)
+
+    def write_ha(self, mqtt_ha, influx_ha):
+        """
+        Writes power and energy utilisation data to the Home Assistant database
+        """
+        cons_energy_delta = float(self.energy_prod_delta-self.energy_exp_delta+self.energy_imp_delta)
+        s_cons_energy_delta = float(self.energy_prod_delta-self.energy_exp_delta)
+        # Write energy values to influx
+        influx_measure = 'Wh'
+        influx_metric = [{
+            'measurement': influx_measure,
+            'time': self.timestamp,
+            'tags': {
+                'domain': INFLUX_DOMAIN,
+                'entity_ID':INFLUX_ENTITY
+            },
+            'fields': {
+                'Production': self.energy_prod_delta,
+                'Import': self.energy_imp_delta,
+                'Export': self.energy_exp_delta,
+                'Consumption': cons_energy_delta,
+                'Self-Consumption': s_cons_energy_delta
+            }
+        }]
+        # Decode inverter status
+        self.inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[self.inv_data['status']]
+        if not DEBUG:
+            mqtt_ha.publish(POWER_TOPIC, self.power_prod/1000)
+            mqtt_ha.publish(EXPORT_TOPIC, self.power_exp/1000)
+            mqtt_ha.publish(IMPORT_TOPIC, self.power_imp/1000)
+            mqtt_ha.publish(LOAD_TOPIC, self.power_load/1000)
+            mqtt_ha.publish(INVERTER_TOPIC, json.dumps(self.inv_data))
+            mqtt_ha.publish(METER_TOPIC, json.dumps(self.meter_data))
+
+            influx_ha.write_points(influx_metric, time_precision='s')
+
+        else:
+            logging.debug( \
+                "Energy  - Production: %s, Export: %s, Import: %s, Consumption: %s, Self Consumption: %s", \
+                self.energy_prod_delta, \
+                self.energy_exp_delta, \
+                self.energy_imp_delta, \
+                cons_energy_delta, \
+                s_cons_energy_delta)
+        # reset energy delta
+        self.energy_prod = self.energy_prod+self.energy_prod_delta
+        self.energy_imp = self.energy_imp+self.energy_imp_delta
+        self.energy_exp = self.energy_exp+self.energy_exp_delta
+
+    def write_power(self, influx_pw):
+        """
+        Writes power utilisation data to the powerlogging database
+        """
+        # Write power values to influx
+        influx_measure = 'W'
+        influx_metric = [{
+            'measurement': influx_measure,
+            'time': self.timestamp,
+            'tags': {
+                'domain': INFLUX_DOMAIN,
+                'entity_ID':INFLUX_ENTITY
+            },
+            'fields': {
+                'Production': self.power_prod,
+                'Import': self.power_imp,
+                'Export': self.power_exp,
+                'Load': self.power_load
+            }
+        }]
+        if not DEBUG:
+            logging.debug("Writing power points")
+            influx_pw.write_points(influx_metric, time_precision='s')
+        else:
+            # Print published values to log
+            logging.debug("Power - Production: %s, Export: %s, Import: %s, Load: %s", \
+                self.power_prod, self.power_exp, self.power_imp, self.power_load)
 
 def write_pid_file():
     """
@@ -225,122 +390,9 @@ def rm_pid_file():
     """
     Deletes the file containing the current process id
     """
-    if os.path.exists(PID_FILE):
-        os.remove(PID_FILE)
-
-def get_solaredge(s_d, m_d, d_d, d_p, cycle, energy_last, debug=False):
-
-    """
-    Reads data from the inverter and decodes the required values
-    """
-
-
-    # read all models in the device
-    retry = MAX_RETRIES
-    while retry > 0:
-        logging.debug("Trying. Cycle= %s, Retry= %s", cycle, retry)
-        try:
-            inv_data = s_d.read_all()
-            meter1 = s_d.meters()["Meter1"]
-            meter_data = meter1.read_all()
-
-            power_prod = float(inv_data['power_ac']*10**inv_data['power_ac_scale'])
-            if meter_data['power'] > 0:
-                power_exp = float(meter_data['power']*10**meter_data['power_scale'])
-                power_imp = 0.0
-            else:
-                power_imp = float(-1.0*meter_data['power']*10**meter_data['power_scale'])
-                power_exp = 0.0
-        except Exception as err:
-            # Retry on read exception
-            logging.debug(err)
-            logging.info("Register read error - retrying")
-            retry -= 1
-            time.sleep(WAIT_TIME)
-        else:
-            retry = 0
-            timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-            logging.debug('Timestamp: %s', timestamp)
-            if cycle == 0:
-                prod_energy_delta = \
-                    float(inv_data['energy_total']*10**inv_data['energy_total_scale']- energy_last['production'])
-                imp_energy_delta = \
-                    float(meter_data['import_energy_active']*10**meter_data['energy_active_scale'] \
-                          - energy_last['import'])
-                exp_energy_delta = \
-                    float(meter_data['export_energy_active']*10**meter_data['energy_active_scale'] \
-                          -energy_last['export'])
-                # Derive values
-            power_load = float(power_prod-power_exp+power_imp)
-
-            if cycle == 0:
-                cons_energy_delta = float(prod_energy_delta-exp_energy_delta+imp_energy_delta)
-                s_cons_energy_delta = float(prod_energy_delta-exp_energy_delta)
-                # Write energy values to influx
-                influx_measure = 'Wh'
-                influx_metric = [{
-                    'measurement': influx_measure,
-                    'time': timestamp,
-                    'tags': {
-                        'domain': INFLUX_DOMAIN,
-                        'entity_ID':INFLUX_ENTITY
-                    },
-                    'fields': {
-                        'Production': prod_energy_delta,
-                        'Import': imp_energy_delta,
-                        'Export': exp_energy_delta,
-                        'Consumption': cons_energy_delta,
-                        'Self-Consumption': s_cons_energy_delta
-                    }
-                }]
-                # Decode inverter status
-                inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[inv_data['status']]
-                if not debug:
-                    m_d.publish(POWER_TOPIC, power_prod/1000)
-                    m_d.publish(EXPORT_TOPIC, power_exp/1000)
-                    m_d.publish(IMPORT_TOPIC, power_imp/1000)
-                    m_d.publish(LOAD_TOPIC, power_load/1000)
-                    m_d.publish(INVERTER_TOPIC, json.dumps(inv_data))
-                    m_d.publish(METER_TOPIC, json.dumps(meter_data))
-
-                    d_d.write_points(influx_metric, time_precision='s')
-
-                else:
-                        # Print published values
-
-                    logging.debug("Publishing data")
-                    logging.debug("Power - Production: %s, Export: %s, Import: %s, Load: %s", \
-                        power_prod, power_exp, power_imp, power_load)
-                    logging.debug( \
-                        "Energy  - Production: %s, Export: %s, Import: %s, Consumption: %s, Self Consumption: %s", \
-                        prod_energy_delta, \
-                        exp_energy_delta, \
-                        imp_energy_delta, \
-                        cons_energy_delta, \
-                        s_cons_energy_delta)
-            # Write power values to influx
-            influx_measure = 'W'
-            influx_metric = [{
-                'measurement': influx_measure,
-                'time': timestamp,
-                'tags': {
-                    'domain': INFLUX_DOMAIN,
-                    'entity_ID':INFLUX_ENTITY
-                },
-                'fields': {
-                    'Production': power_prod,
-                    'Import': power_imp,
-                    'Export': power_exp,
-                    'Load': power_load
-                }
-            }]
-            if not debug:
-                logging.debug("Writing power points")
-                d_p.write_points(influx_metric, time_precision='s')
-            return float(inv_data['energy_total']*10**inv_data['energy_total_scale']), \
-                   float(meter_data['import_energy_active']*10**meter_data['energy_active_scale']), \
-                   float(meter_data['export_energy_active']*10**meter_data['energy_active_scale'])
-
+    if not DEBUG:
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
 
 def parse_args():
     """
@@ -348,36 +400,27 @@ def parse_args():
     """
 
     parser = argparse.ArgumentParser(description='Get solar performance data from a solaredge inverter')
-    args = parser.parse_args()
-    parser.add_argument('-t', metavar=' ',
-                        default='tcp',
-                        help='transport type: rtu, tcp, mapped [default: tcp]')
-    parser.add_argument('-a', metavar=' ', type=int,
-                        default=1,
-                        help='modbus slave address [default: 1]')
     parser.add_argument('-i', metavar=' ',
                         default='localhost',
                         help='ip address to use for modbus tcp [default: localhost]')
-    parser.add_argument('-P', metavar=' ', type=int,
+    parser.add_argument('-p', metavar=' ', type=int,
                         default=502,
                         help='port number for modbus tcp [default: 502]')
-    parser.add_argument('-p', metavar=' ',
-                        default='/dev/ttyUSB0',
-                        help='serial port for modbus rtu [default: /dev/ttyUSB0]')
-    parser.add_argument('-b', metavar=' ',
-                        default=9600,
-                        help='baud rate for modbus rtu [default: 9600]')
-    parser.add_argument('-T', metavar=' ', type=float,
-                        default=2.0,
-                        help='timeout, in seconds (can be fractional, such as 1.5) [default: 2.0]')
-    parser.add_argument('-m', metavar=' ',
-                        help='modbus map file')
+    parser.add_argument('-t', metavar=' ', type=int,
+                        default=1,
+                        help='connection timeout [default: 1]')
+    parser.add_argument('-u', metavar=' ', type=int,
+                        default=1,
+                        help='modbus unit [default: 1]')
     parser.add_argument('-D', action="store_true",
                         help='run in debug mode')
-    print(args)
-    return args
+    return parser.parse_args()
 
 def set_logging(log_str):
+    """
+    Configures the log level, and log format and sets up the logging handlers
+    """
+
     # Defines a logging level and logging format based on a given string key.
     log_attr = {'debug': (logging.DEBUG,
                           _ID + ' %(levelname)-9s %(name)-15s %(threadName)-14s +%(lineno)-4d %(message)s'),
@@ -401,114 +444,89 @@ def set_logging(log_str):
     # Setting formaters and adding handlers.
     formatter = logging.Formatter(logformat)
     handlers = []
-    handlers.append(SysLogLibHandler(LOG_FACILITY_LOCAL_N))
-    for handle in handlers:
-        handle.setFormatter(formatter)
-        logger.addHandler(handle)
-
+    if not DEBUG:
+        handlers.append(SysLogLibHandler(LOG_FACILITY_LOCAL_N))
+        for handle in handlers:
+            handle.setFormatter(formatter)
+            logger.addHandler(handle)
 
 def main():
     """
     Main processing loop
     """
 
+    # pylint: disable=global-statement
+    # use of global statement here is required to allow main() to set the value based on passed arguments to the program
+
+    global DEBUG, INFLUX_PASSWORD
+
     # Get the passwords from the plain text keyring
     keyring.set_keyring(PlaintextKeyring())
     mqtt_password = keyring.get_password(MQTT_HOST, MQTT_USER)
-    influx_password = keyring.get_password(INFLUX_HOST, INFLUX_USER)
-
-    # Initialise last published energy counters
-    energy_last = {'production': 0.0, 'import': 0.0, 'export': 0.0}
+    INFLUX_PASSWORD = keyring.get_password(INFLUX_HOST, INFLUX_USER)
 
     args = parse_args()
 
-    print(args)
-    if args.D:
-        set_logging('debug')
-        debug = True
-    else:
-        set_logging('info')
-        debug = False
     # Setup logging
 
-    # if running as a daemon, record the PID
-    try:
-        write_pid_file()
-    except Exception as err:
-        print(err)
-#    if os.path.isfile(PID_FILE):
-#        logging.error("PID already exists. Is getsolar already running? Remove %s if it is not", \
-#            PID_FILE)
-#        rm_pid_file()
-#        sys.exit(1)
+    if args.D:
+        DEBUG = True
+        set_logging('debug')
+        logging.debug("Running in debug mode, not writing data")
+    else:
+        DEBUG = False
+        set_logging('info')
+        if os.path.exists(PID_FILE):
+            logging.error("PID already exists. Is getsolar already running?")
+            logging.error("Either, stop the running process or remove %s or run with the debug flag set (-D)", PID_FILE)
+            sys.exit(2)
+        else:
+            write_pid_file()
+
+    # Connect to MQTT
 
     m_d = mqtt.Client(MQTT_CLIENT_NAME)
     m_d.username_pw_set(MQTT_USER, mqtt_password)
     m_d.connect(MQTT_HOST, int(MQTT_PORT))
     m_d.loop_start()
 
-    d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, influx_password, INFLUX_DB_ALL)
-    d_p = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, influx_password, INFLUX_DB_POWER)
+    # Connect to two InfluxDB databases
+    #   DB 1 = Home Assistant database for one minute logging of power and energy data
+    #   DB 2 = Powerlogging for 10s logging of power only
 
-    # Setup 'last' energy counters
+    d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_ALL)
+    d_p = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_POWER)
 
-    result = d_d.query('select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
-    logging.debug("Result: %s", result.raw)
-    points = result.get_points()
-    for point in points:
-        energy_last['production'] = point['Production']
-        energy_last['export'] = point['Export']
-        energy_last['import'] = point['Import']
+    inv_data = InverterData()
 
-    cycle = 0
+    # Initialise cycle counter and number of retries
+
+    counter = MAX_COUNTER
     retry = MAX_RETRIES
-    logging.info("Modbus: Opening client")
-    if args.t == 'tcp':
-        try:
-            s_d = solaredge_modbus.Inverter(host=args.i, port=args.P)
-        except Exception as err:
-            logging.debug("Opening")
-            logging.debug(Exception)
-            logging.debug(err)
-    elif args.t == 'rtu':
-        s_d = solaredge_modbus.Inverter(device=args.p, baud=args.b)
-    else:
-        logging.critical('Unknown -t option: %s', args.t)
-        rm_pid_file()
-        sys.exit(1)
+
+    # Connect to solaredge modbus inverter
+
+    s_d = solaredge_modbus.Inverter(host=args.i, port=args.p, timeout=args.t, unit=args.u)
+
+    # Try up to MAX_RETRIES times to read data from the inverter
+
     while retry != 0:
-        if s_d.connected():
-            retry = MAX_RETRIES
-            # Read registers
-            logging.debug("Running in debug mode, not writing data")
-            logging.debug("Reading data - cycle %s", cycle)
-#            energy_last['production'], energy_last['export'], energy_last['import'] = \
-#                get_solaredge(s_d, m_d, d_d, d_p, cycle, energy_last, debug)
-            cycle += 1
-            if cycle > 5:
-                cycle = 0
-            #logging.info("Sunspec: Closing client")
-            # Close the connection (TODO)
-            #s_d.close()
-            time.sleep(SLEEP_TIME)
-        else:
-            logging.info('Connect failed - retrying')
+        if not s_d.connected():
             retry -= 1
             time.sleep(WAIT_TIME)
-            logging.info("Modbus: Opening client")
-            if args.t == 'tcp':
-                try:
-                    s_d = solaredge_modbus.Inverter(host=args.i, port=args.P)
-                except Exception as err:
-                    logging.debug("Opening")
-                    logging.debug(Exception)
-                    logging.debug(err)
-            elif args.t == 'rtu':
-                s_d = solaredge_modbus.Inverter(device=args.p, baud=args.b)
+            s_d = solaredge_modbus.Inverter(host=args.i, port=args.p, timeout=args.t, unit=args.u)
+        else:
+            retry = MAX_RETRIES
+            # Read registers
+            logging.debug("Reading data - cycle %s", counter)
+            inv_data.update(s_d)
+            inv_data.write_power(d_p)
+            if counter == 0:
+                inv_data.write_ha(m_d, d_d)
+                counter = 5
             else:
-                logging.critical('Unknown -t option: %s', args.t)
-                rm_pid_file()
-                sys.exit(1)
+                counter -= 1
+            time.sleep(SLEEP_TIME)
     logging.error("Too many retries")
     rm_pid_file()
     sys.exit(2)
