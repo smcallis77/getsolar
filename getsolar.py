@@ -327,7 +327,7 @@ class InverterData():
         # Decode inverter status
         self.inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[self.inv_data['status']]
         if not DEBUG:
-            logging.info("Writing energy points")
+            logging.warning("Writing energy points")
             mqtt_ha.publish(POWER_TOPIC, self.power_prod/1000)
             mqtt_ha.publish(EXPORT_TOPIC, self.power_exp/1000)
             mqtt_ha.publish(IMPORT_TOPIC, self.power_imp/1000)
@@ -371,7 +371,7 @@ class InverterData():
             }
         }]
         if not DEBUG:
-            logging.info("Writing power points")
+            logging.warning("Writing power points")
             influx_pw.write_points(influx_metric, time_precision='s')
         else:
             # Print published values to log
