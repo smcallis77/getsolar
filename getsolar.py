@@ -314,7 +314,7 @@ class InverterData():
             'time': self.timestamp,
             'tags': {
                 'domain': INFLUX_DOMAIN,
-                'entity_ID':INFLUX_ENTITY
+                'entity_id':INFLUX_ENTITY
             },
             'fields': {
                 'Production': self.energy_prod_delta,
@@ -327,6 +327,7 @@ class InverterData():
         # Decode inverter status
         self.inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[self.inv_data['status']]
         if not DEBUG:
+            logging.info("Writing energy points")
             mqtt_ha.publish(POWER_TOPIC, self.power_prod/1000)
             mqtt_ha.publish(EXPORT_TOPIC, self.power_exp/1000)
             mqtt_ha.publish(IMPORT_TOPIC, self.power_imp/1000)
@@ -360,7 +361,7 @@ class InverterData():
             'time': self.timestamp,
             'tags': {
                 'domain': INFLUX_DOMAIN,
-                'entity_ID':INFLUX_ENTITY
+                'entity_id':INFLUX_ENTITY
             },
             'fields': {
                 'Production': self.power_prod,
@@ -370,7 +371,7 @@ class InverterData():
             }
         }]
         if not DEBUG:
-            logging.debug("Writing power points")
+            logging.info("Writing power points")
             influx_pw.write_points(influx_metric, time_precision='s')
         else:
             # Print published values to log
