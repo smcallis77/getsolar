@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-# getsolar.py v1.2 30-July-2020
+# getsolar.py v1.2.1 30-July-2020
+
+VERSION = 'v1.2.1'
 
 """
   Copyright (c) 2018, Steve McAllister
@@ -171,7 +173,6 @@ INFLUX_PASSWORD = ''
 
 # Initialise syslog settings
 
-VERSION = 'v1.2'
 _ID = 'getsolar ' + VERSION
 LOG_FACILITY_LOCAL_N = 1
 
@@ -327,7 +328,7 @@ class InverterData():
         # Decode inverter status
         self.inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[self.inv_data['status']]
         if not DEBUG:
-            logging.warning("Writing energy points")
+            logging.debug("Writing energy points")
             mqtt_ha.publish(POWER_TOPIC, self.power_prod/1000)
             mqtt_ha.publish(EXPORT_TOPIC, self.power_exp/1000)
             mqtt_ha.publish(IMPORT_TOPIC, self.power_imp/1000)
@@ -371,7 +372,7 @@ class InverterData():
             }
         }]
         if not DEBUG:
-            logging.warning("Writing power points")
+            logging.debug("Writing power points")
             influx_pw.write_points(influx_metric, time_precision='s')
         else:
             # Print published values to log
