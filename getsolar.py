@@ -2,6 +2,18 @@
 
 # getsolar.py v1.2.1 30-July-2020
 
+from keyrings.alt.file import PlaintextKeyring
+import keyring.backend
+from influxdb import InfluxDBClient
+import paho.mqtt.client as mqtt
+import solaredge_modbus
+import argparse
+import json
+import syslog
+import logging
+import time
+import os
+import sys
 VERSION = 'v1.2.1'
 
 """
@@ -136,21 +148,8 @@ v1.2 - update code to comply with pylint coding standards
 
 """
 
-import sys
-import os
-import time
-import logging
-import syslog
-import json
-import argparse
-import solaredge_modbus
-import paho.mqtt.client as mqtt
-from influxdb import InfluxDBClient
-import keyring.backend
-from keyrings.alt.file import PlaintextKeyring
 
-
-MQTT_CLIENT_NAME = "getsolar"
+MQTT_CLIENT_NAME = "getsolar.192.168.20.2"
 MQTT_HOST = "ha.smcallister.org"
 MQTT_PORT = "1883"
 MQTT_USER = "homecontrol"
@@ -165,7 +164,7 @@ METER_TOPIC = "house/solaredge/meter/state"
 INFLUX_USER = 'telegraf'
 INFLUX_DB_ALL = 'home_assistant'
 INFLUX_DB_POWER = 'powerlogging'
-INFLUX_HOST = 'localhost'
+INFLUX_HOST = 'ha.smcallister.org'
 INFLUX_PORT = 8086
 INFLUX_DOMAIN = 'solaredge'
 INFLUX_ENTITY = 'meters'
@@ -182,15 +181,15 @@ SLEEP_TIME = 10
 WAIT_TIME = 1
 MAX_RETRIES = 5
 MAX_COUNTER = 5
-PID_FILE = '/var/run/getsolar/getsolar.pid'
+#PID_FILE = '/var/run/getsolar/getsolar.pid'
 DEBUG = False
+
 
 class SysLogLibHandler(logging.Handler):
     """A logging handler that emits messages to syslog.syslog."""
 
     # pylint: disable=broad-except
     # broad exception is reasonable in this case as
-
 
     FACILITY = [syslog.LOG_LOCAL0,
                 syslog.LOG_LOCAL1,
@@ -200,6 +199,7 @@ class SysLogLibHandler(logging.Handler):
                 syslog.LOG_LOCAL5,
                 syslog.LOG_LOCAL6,
                 syslog.LOG_LOCAL7]
+
     def __init__(self, n):
         """ Pre. (0 <= n <= 7) """
         try:
@@ -209,7 +209,8 @@ class SysLogLibHandler(logging.Handler):
                 syslog.openlog(syslog.LOG_PID, self.FACILITY[n])
             except Exception:
                 try:
-                    syslog.openlog('my_IDent', syslog.LOG_PID, self.FACILITY[n])
+                    syslog.openlog('my_IDent', syslog.LOG_PID,
+                                   self.FACILITY[n])
                 except:
                     raise
         # We got it
@@ -226,7 +227,6 @@ class InverterData():
     # pylint: disable=too-many-instance-attributes
     # Eleven is reasonable in this case.
 
-
     def __init__(self):
 
         self.timestamp = ""
@@ -241,11 +241,13 @@ class InverterData():
 
         self.inv_data = {}
         self.meter_data = {}
-        d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_ALL)
+        d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT,
+                             INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_ALL)
         # Setup 'last' energy counters
         # Energy data over an interval = current data - last recorded data
 
-        result = d_d.query('select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
+        result = d_d.query(
+            'select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
         logging.debug("Result: %s", result.raw)
         points = result.get_points()
         for point in points:
@@ -280,34 +282,42 @@ class InverterData():
 
                 # Update power data
 
-                self.power_prod = float(self.inv_data['power_ac']*10**self.inv_data['power_ac_scale'])
+                self.power_prod = float(
+                    self.inv_data['power_ac']*10**self.inv_data['power_ac_scale'])
                 if self.meter_data['power'] > 0:
-                    self.power_exp = float(self.meter_data['power']*10**self.meter_data['power_scale'])
+                    self.power_exp = float(
+                        self.meter_data['power']*10**self.meter_data['power_scale'])
                     self.power_imp = 0.0
                 else:
-                    self.power_imp = float(-1.0*self.meter_data['power']*10**self.meter_data['power_scale'])
+                    self.power_imp = float(
+                        -1.0*self.meter_data['power']*10**self.meter_data['power_scale'])
                     self.power_exp = 0.0
-                self.power_load = float(self.power_prod-self.power_exp+self.power_imp)
-                self.timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                self.power_load = float(
+                    self.power_prod-self.power_exp+self.power_imp)
+                self.timestamp = time.strftime(
+                    '%Y-%m-%dT%H:%M:%SZ', time.gmtime())
                 logging.debug('Timestamp: %s', self.timestamp)
 
                 # Update energy data
 
                 self.energy_prod_delta = \
-                    float(self.inv_data['energy_total']*10**self.inv_data['energy_total_scale']- self.energy_prod)
+                    float(self.inv_data['energy_total']*10 **
+                          self.inv_data['energy_total_scale'] - self.energy_prod)
                 self.energy_imp_delta =  \
-                    float(self.meter_data['import_energy_active']*10**self.meter_data['energy_active_scale'] \
+                    float(self.meter_data['import_energy_active']*10**self.meter_data['energy_active_scale']
                           - self.energy_imp)
                 self.energy_exp_delta =  \
-                    float(self.meter_data['export_energy_active']*10**self.meter_data['energy_active_scale'] \
-                          -self.energy_exp)
+                    float(self.meter_data['export_energy_active']*10**self.meter_data['energy_active_scale']
+                          - self.energy_exp)
 
     def write_ha(self, mqtt_ha, influx_ha):
         """
         Writes power and energy utilisation data to the Home Assistant database
         """
-        cons_energy_delta = float(self.energy_prod_delta-self.energy_exp_delta+self.energy_imp_delta)
-        s_cons_energy_delta = float(self.energy_prod_delta-self.energy_exp_delta)
+        cons_energy_delta = float(
+            self.energy_prod_delta-self.energy_exp_delta+self.energy_imp_delta)
+        s_cons_energy_delta = float(
+            self.energy_prod_delta-self.energy_exp_delta)
         # Write energy values to influx
         influx_measure = 'Wh'
         influx_metric = [{
@@ -315,7 +325,7 @@ class InverterData():
             'time': self.timestamp,
             'tags': {
                 'domain': INFLUX_DOMAIN,
-                'entity_id':INFLUX_ENTITY
+                'entity_id': INFLUX_ENTITY
             },
             'fields': {
                 'Production': self.energy_prod_delta,
@@ -339,12 +349,12 @@ class InverterData():
             influx_ha.write_points(influx_metric, time_precision='s')
 
         else:
-            logging.debug( \
-                "Energy  - Production: %s, Export: %s, Import: %s, Consumption: %s, Self Consumption: %s", \
-                self.energy_prod_delta, \
-                self.energy_exp_delta, \
-                self.energy_imp_delta, \
-                cons_energy_delta, \
+            logging.debug(
+                "Energy  - Production: %s, Export: %s, Import: %s, Consumption: %s, Self Consumption: %s",
+                self.energy_prod_delta,
+                self.energy_exp_delta,
+                self.energy_imp_delta,
+                cons_energy_delta,
                 s_cons_energy_delta)
         # reset energy delta
         self.energy_prod = self.energy_prod+self.energy_prod_delta
@@ -362,7 +372,7 @@ class InverterData():
             'time': self.timestamp,
             'tags': {
                 'domain': INFLUX_DOMAIN,
-                'entity_id':INFLUX_ENTITY
+                'entity_id': INFLUX_ENTITY
             },
             'fields': {
                 'Production': self.power_prod,
@@ -376,32 +386,36 @@ class InverterData():
             influx_pw.write_points(influx_metric, time_precision='s')
         else:
             # Print published values to log
-            logging.debug("Power - Production: %s, Export: %s, Import: %s, Load: %s", \
-                self.power_prod, self.power_exp, self.power_imp, self.power_load)
+            logging.debug("Power - Production: %s, Export: %s, Import: %s, Load: %s",
+                          self.power_prod, self.power_exp, self.power_imp, self.power_load)
 
-def write_pid_file():
+
+def write_pid_file(pid_f):
     """
     Writes a file containing the current process id
     """
     pid = str(os.getpid())
-    _f = open(PID_FILE, 'w')
+    _f = open(pid_f, 'w')
     _f.write(pid)
     _f.close()
 
-def rm_pid_file():
+
+def rm_pid_file(pid_f):
     """
     Deletes the file containing the current process id
     """
     if not DEBUG:
-        if os.path.exists(PID_FILE):
-            os.remove(PID_FILE)
+        if os.path.exists(pid_f):
+            os.remove(pid_f)
+
 
 def parse_args():
     """
         configure valid arguments
     """
 
-    parser = argparse.ArgumentParser(description='Get solar performance data from a solaredge inverter')
+    parser = argparse.ArgumentParser(
+        description='Get solar performance data from a solaredge inverter')
     parser.add_argument('-i', metavar=' ',
                         default='localhost',
                         help='ip address to use for modbus tcp [default: localhost]')
@@ -417,6 +431,7 @@ def parse_args():
     parser.add_argument('-D', action="store_true",
                         help='run in debug mode')
     return parser.parse_args()
+
 
 def set_logging(log_str):
     """
@@ -452,6 +467,25 @@ def set_logging(log_str):
             handle.setFormatter(formatter)
             logger.addHandler(handle)
 
+
+def on_connect(client, userdata, flags, rc):
+    # client.error_code = rc
+    if rc == 0:
+        client.connected_flag = True  # set flag
+    else:
+        client.connected_flag = False
+
+
+def on_disconnect(client, userdata, rc):
+    logging.info("disconnecting reason  " + str(rc))
+    client.connected_flag = False
+    client.disconnect_flag = True
+
+
+def on_log(client, userdata, level, buf):
+    logging.debug("log: " + buf)
+
+
 def main():
     """
     Main processing loop
@@ -467,6 +501,11 @@ def main():
     mqtt_password = keyring.get_password(MQTT_HOST, MQTT_USER)
     INFLUX_PASSWORD = keyring.get_password(INFLUX_HOST, INFLUX_USER)
 
+    try:
+        pid_file = os.environ['PIDFILE']
+    except:
+        pid_file = "null"
+
     args = parse_args()
 
     # Setup logging
@@ -478,26 +517,45 @@ def main():
     else:
         DEBUG = False
         set_logging('info')
-        if os.path.exists(PID_FILE):
+        if os.path.exists(pid_file):
             logging.error("PID already exists. Is getsolar already running?")
-            logging.error("Either, stop the running process or remove %s or run with the debug flag set (-D)", PID_FILE)
+            logging.error(
+                "Either, stop the running process or remove %s or run with the debug flag set (-D)", pid_file)
             sys.exit(2)
         else:
-            write_pid_file()
+            write_pid_file(pid_file)
 
     # Connect to MQTT
 
     m_d = mqtt.Client(MQTT_CLIENT_NAME)
+    m_d.connected_flag = False
+    m_d.error_code = 0
+    m_d.on_connect = on_connect  # bind call back function
+    m_d.on_disconnect = on_disconnect
+    m_d.on_log = on_log
     m_d.username_pw_set(MQTT_USER, mqtt_password)
     m_d.connect(MQTT_HOST, int(MQTT_PORT))
     m_d.loop_start()
+
+    retry = MAX_RETRIES
+    while not m_d.connected_flag:
+        if retry == 0:
+            # wait in loop for MAX_RETRIES
+            sys.exit("Connect failed with error", m_d.error_code)
+        else:
+            if m_d.error_code == 5:
+                sys.exit("Authorisation Failure" + mqtt_password)
+            time.sleep(1)
+            retry -= 1
 
     # Connect to two InfluxDB databases
     #   DB 1 = Home Assistant database for one minute logging of power and energy data
     #   DB 2 = Powerlogging for 10s logging of power only
 
-    d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_ALL)
-    d_p = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_POWER)
+    d_d = InfluxDBClient(INFLUX_HOST, INFLUX_PORT,
+                         INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_ALL)
+    d_p = InfluxDBClient(INFLUX_HOST, INFLUX_PORT,
+                         INFLUX_USER, INFLUX_PASSWORD, INFLUX_DB_POWER)
 
     inv_data = InverterData()
 
@@ -508,7 +566,11 @@ def main():
 
     # Connect to solaredge modbus inverter
 
-    s_d = solaredge_modbus.Inverter(host=args.i, port=args.p, timeout=args.t, unit=args.u)
+    logging.debug("Connect to device. Host " + args.i + " Port " +
+                  str(args.p) + " Timeout " + str(args.t) + " Unit " + str(args.u))
+    s_d = solaredge_modbus.Inverter(
+        host=args.i, port=args.p, timeout=args.t, unit=args.u)
+    # s_d.connect()
 
     # Try up to MAX_RETRIES times to read data from the inverter
 
@@ -516,7 +578,10 @@ def main():
         if not s_d.connected():
             retry -= 1
             time.sleep(WAIT_TIME)
-            s_d = solaredge_modbus.Inverter(host=args.i, port=args.p, timeout=args.t, unit=args.u)
+            logging.debug("Retry. Connect to device. Host " +
+                          args.i + " Port " + str(args.p) + " Timeout " + str(args.t) + " Unit " + str(args.u))
+            s_d = solaredge_modbus.Inverter(
+                host=args.i, port=args.p, timeout=args.t, unit=args.u)
         else:
             retry = MAX_RETRIES
             # Read registers
@@ -530,7 +595,7 @@ def main():
                 counter -= 1
             time.sleep(SLEEP_TIME)
     logging.error("Too many retries")
-    rm_pid_file()
+    rm_pid_file(pid_file)
     sys.exit(2)
 
 

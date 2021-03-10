@@ -2,11 +2,13 @@
 # getsolar - extracts data from a Sunspec compliant AC Inverter
 
 # you need to make the PIDFILE dir and ensure it has the right permissions
-PIDFILE="/var/run/getsolar/getsolar.pid"
+PIDFILE="/var/run/user/1000/getsolar.pid"
+export PIDFILE
 RUNFILE="/usr/local/bin/getsolar.py"
 DEVICE_ADDRESS="solaredge.smcallister.org"
 #DEVICE_ADDRESS="localhost"
 DEBUG=
+
 
 start()
 {
