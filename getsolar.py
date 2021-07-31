@@ -575,7 +575,7 @@ def main():
     # Try up to MAX_RETRIES times to read data from the inverter
 
     while retry != 0:
-        if not s_d.connected():
+        if not s_d.connect():
             retry -= 1
             time.sleep(WAIT_TIME)
             logging.debug("Retry. Connect to device. Host " +
