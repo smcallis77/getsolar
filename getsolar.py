@@ -14,7 +14,7 @@ import logging
 import time
 import os
 import sys
-VERSION = 'v1.2.1'
+VERSION = 'v1.3.0'
 
 """
   Copyright (c) 2018, Steve McAllister
@@ -22,10 +22,18 @@ VERSION = 'v1.2.1'
 
 Connects to a solaredge inverter extracts data and writes to two influx databases.
 
-Database 1 - homeassistant(HA) DB writes important sensor data for homeassistant
+Database 1 - homeassistant(HA) DB writes important sensor ENERGY data for homeassistant
              approximately once per minute
-Database 2 - powerlogging DB - writes a smaller amount of data more frequently
+Database 2 - powerlogging DB - writes a smaller amount of POWER data more frequently
              for analysis of 'AC Load'
+
+Changelog:
+
+V1.3.0
+    Prior to v1.3.0 energy was written to the database as energy generated between this data point and the last data point. Energy is now written as
+    total lifetime energy. 
+
+v1.2 - update code to comply with pylint coding standards
 
   options:
       -t: transport type: tcp or rtu (default: tcp)
@@ -144,8 +152,6 @@ Solaredge Register Details
 
 Changelog.
 
-v1.2 - update code to comply with pylint coding standards
-
 """
 
 
@@ -162,8 +168,8 @@ METER_TOPIC = "house/solaredge/meter/state"
 
 # Initialise Influxdb data object
 INFLUX_USER = 'telegraf'
-INFLUX_DB_ALL = 'home_assistant'
-INFLUX_DB_POWER = 'powerlogging'
+INFLUX_DB_ALL = 'solar'
+INFLUX_DB_POWER = 'solar'
 INFLUX_HOST = 'ha.smcallister.org'
 INFLUX_PORT = 8086
 INFLUX_DOMAIN = 'solaredge'
@@ -230,14 +236,26 @@ class InverterData():
     def __init__(self):
 
         self.timestamp = ""
-        self.power_prod = 0.0
-        self.power_imp = 0.0
-        self.power_exp = 0.0
-        self.power_load = 0.0
-
-        self.energy_prod_delta = 0.0
-        self.energy_imp_delta = 0.0
-        self.energy_exp_delta = 0.0
+        self.power = {
+            "prod" : 0.0,
+            "imp" : 0.0,
+            "exp" : 0.0,
+            "load" : 0.0
+        }
+#        self.power_prod = 0.0
+#        self.power_imp = 0.0
+#        self.power_exp = 0.0
+#        self.power_load = 0.0
+        self.energy = {
+            "prod" : 0.0,
+            "imp"  : 0.0,
+            "exp"  : 0.0,
+            "cons" : 0.0,
+            "s-cons" : 0.0
+        }
+#        self.energy_prod_delta = 0.0
+#        self.energy_imp_delta = 0.0
+#        self.energy_exp_delta = 0.0
 
         self.inv_data = {}
         self.meter_data = {}
@@ -246,14 +264,14 @@ class InverterData():
         # Setup 'last' energy counters
         # Energy data over an interval = current data - last recorded data
 
-        result = d_d.query(
-            'select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
-        logging.debug("Result: %s", result.raw)
-        points = result.get_points()
-        for point in points:
-            self.energy_prod = point['Production']
-            self.energy_exp = point['Export']
-            self.energy_imp = point['Import']
+#        result = d_d.query(
+#            'select sum(Production) as Production,sum(Export) as Export ,sum(Import) as Import from Wh')
+#        logging.debug("Result: %s", result.raw)
+#        points = result.get_points()
+#        for point in points:
+#            self.energy_prod = point['Production']
+#            self.energy_exp = point['Export']
+#            self.energy_imp = point['Import']
 
     def update(self, s_d):
         """
@@ -282,31 +300,31 @@ class InverterData():
 
                 # Update power data
 
-                self.power_prod = float(
+                self.power["prod"] = float(
                     self.inv_data['power_ac']*10**self.inv_data['power_ac_scale'])
                 if self.meter_data['power'] > 0:
-                    self.power_exp = float(
+                    self.power["exp"] = float(
                         self.meter_data['power']*10**self.meter_data['power_scale'])
-                    self.power_imp = 0.0
+                    self.power["imp"] = 0.0
                 else:
-                    self.power_imp = float(
+                    self.power["imp"] = float(
                         -1.0*self.meter_data['power']*10**self.meter_data['power_scale'])
-                    self.power_exp = 0.0
-                self.power_load = float(
-                    self.power_prod-self.power_exp+self.power_imp)
+                    self.power["exp"] = 0.0
+                self.power["load"] = float(
+                    self.power["prod"]-self.power["exp"]+self.power["imp"])
                 self.timestamp = time.strftime(
                     '%Y-%m-%dT%H:%M:%SZ', time.gmtime())
                 logging.debug('Timestamp: %s', self.timestamp)
 
                 # Update energy data
 
-                self.energy_prod_delta = \
+                self.energy["prod"] = \
                     float(self.inv_data['energy_total']*10 **
-                          self.inv_data['energy_total_scale'] - self.energy_prod)
-                self.energy_imp_delta =  \
+                          self.inv_data['energy_total_scale'])
+                self.energy["imp"] =  \
                     float(self.meter_data['import_energy_active']*10**self.meter_data['energy_active_scale']
                           - self.energy_imp)
-                self.energy_exp_delta =  \
+                self.energy["exp"] =  \
                     float(self.meter_data['export_energy_active']*10**self.meter_data['energy_active_scale']
                           - self.energy_exp)
 
@@ -314,10 +332,10 @@ class InverterData():
         """
         Writes power and energy utilisation data to the Home Assistant database
         """
-        cons_energy_delta = float(
-            self.energy_prod_delta-self.energy_exp_delta+self.energy_imp_delta)
-        s_cons_energy_delta = float(
-            self.energy_prod_delta-self.energy_exp_delta)
+        self.energy["cons"] = float(
+            self.energy["prod"]-self.energy["exp"]+self.energy["imp"])
+        self.energy["s-cons"] = float(
+            self.energy["prod"]-self.energy["exp"])
         # Write energy values to influx
         influx_measure = 'Wh'
         influx_metric = [{
@@ -328,21 +346,21 @@ class InverterData():
                 'entity_id': INFLUX_ENTITY
             },
             'fields': {
-                'Production': self.energy_prod_delta,
-                'Import': self.energy_imp_delta,
-                'Export': self.energy_exp_delta,
-                'Consumption': cons_energy_delta,
-                'Self-Consumption': s_cons_energy_delta
+                'Production': self.energy["prod"],
+                'Import': self.energy["imp"],
+                'Export': self.energy["exp"],
+                'Consumption': self.energy["cons"],
+                'Self-Consumption': self.energy["s-cons"]
             }
         }]
         # Decode inverter status
         self.inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[self.inv_data['status']]
         if not DEBUG:
             logging.debug("Writing energy points")
-            mqtt_ha.publish(POWER_TOPIC, self.power_prod/1000)
-            mqtt_ha.publish(EXPORT_TOPIC, self.power_exp/1000)
-            mqtt_ha.publish(IMPORT_TOPIC, self.power_imp/1000)
-            mqtt_ha.publish(LOAD_TOPIC, self.power_load/1000)
+            mqtt_ha.publish(POWER_TOPIC, self.power["prod"]/1000)
+            mqtt_ha.publish(EXPORT_TOPIC, self.power["exp"]/1000)
+            mqtt_ha.publish(IMPORT_TOPIC, self.power["imp"]/1000)
+            mqtt_ha.publish(LOAD_TOPIC, self.power{"load"]/1000)
             mqtt_ha.publish(INVERTER_TOPIC, json.dumps(self.inv_data))
             mqtt_ha.publish(METER_TOPIC, json.dumps(self.meter_data))
 
@@ -351,15 +369,15 @@ class InverterData():
         else:
             logging.debug(
                 "Energy  - Production: %s, Export: %s, Import: %s, Consumption: %s, Self Consumption: %s",
-                self.energy_prod_delta,
-                self.energy_exp_delta,
-                self.energy_imp_delta,
-                cons_energy_delta,
-                s_cons_energy_delta)
+                self.energy["prod"],
+                self.energy["exp"],
+                self.energy["imp"],
+                self.energy["cons",
+                self.energy["s-cons"])
         # reset energy delta
-        self.energy_prod = self.energy_prod+self.energy_prod_delta
-        self.energy_imp = self.energy_imp+self.energy_imp_delta
-        self.energy_exp = self.energy_exp+self.energy_exp_delta
+#        self.energy_prod = self.energy_prod+self.energy_prod_delta
+#        self.energy_imp = self.energy_imp+self.energy_imp_delta
+#        self.energy_exp = self.energy_exp+self.energy_exp_delta
 
     def write_power(self, influx_pw):
         """
@@ -375,10 +393,10 @@ class InverterData():
                 'entity_id': INFLUX_ENTITY
             },
             'fields': {
-                'Production': self.power_prod,
-                'Import': self.power_imp,
-                'Export': self.power_exp,
-                'Load': self.power_load
+                'Production': self.power["prod"],
+                'Import': self.power["imp"],
+                'Export': self.power["exp"],
+                'Load': self.power["load"]
             }
         }]
         if not DEBUG:
@@ -387,7 +405,7 @@ class InverterData():
         else:
             # Print published values to log
             logging.debug("Power - Production: %s, Export: %s, Import: %s, Load: %s",
-                          self.power_prod, self.power_exp, self.power_imp, self.power_load)
+                          self.power["prod"], self.power["exp"], self.power["imp"], self.power["load"])
 
 
 def write_pid_file(pid_f):
