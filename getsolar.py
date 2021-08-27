@@ -322,11 +322,9 @@ class InverterData():
                     float(self.inv_data['energy_total']*10 **
                           self.inv_data['energy_total_scale'])
                 self.energy["imp"] =  \
-                    float(self.meter_data['import_energy_active']*10**self.meter_data['energy_active_scale']
-                          - self.energy_imp)
+                    float(self.meter_data['import_energy_active']*10**self.meter_data['energy_active_scale'])
                 self.energy["exp"] =  \
-                    float(self.meter_data['export_energy_active']*10**self.meter_data['energy_active_scale']
-                          - self.energy_exp)
+                    float(self.meter_data['export_energy_active']*10**self.meter_data['energy_active_scale'])
 
     def write_ha(self, mqtt_ha, influx_ha):
         """
@@ -360,7 +358,7 @@ class InverterData():
             mqtt_ha.publish(POWER_TOPIC, self.power["prod"]/1000)
             mqtt_ha.publish(EXPORT_TOPIC, self.power["exp"]/1000)
             mqtt_ha.publish(IMPORT_TOPIC, self.power["imp"]/1000)
-            mqtt_ha.publish(LOAD_TOPIC, self.power{"load"]/1000)
+            mqtt_ha.publish(LOAD_TOPIC, self.power["load"]/1000)
             mqtt_ha.publish(INVERTER_TOPIC, json.dumps(self.inv_data))
             mqtt_ha.publish(METER_TOPIC, json.dumps(self.meter_data))
 
@@ -372,7 +370,7 @@ class InverterData():
                 self.energy["prod"],
                 self.energy["exp"],
                 self.energy["imp"],
-                self.energy["cons",
+                self.energy["cons"],
                 self.energy["s-cons"])
         # reset energy delta
 #        self.energy_prod = self.energy_prod+self.energy_prod_delta
