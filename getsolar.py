@@ -12,6 +12,7 @@ import json
 import syslog
 import logging
 import time
+import datetime
 import os
 import sys
 VERSION = 'v1.3.0'
@@ -237,21 +238,21 @@ class InverterData():
 
         self.timestamp = ""
         self.power = {
-            "prod" : 0.0,
-            "imp" : 0.0,
-            "exp" : 0.0,
-            "load" : 0.0
+            "prod": 0.0,
+            "imp": 0.0,
+            "exp": 0.0,
+            "load": 0.0
         }
 #        self.power_prod = 0.0
 #        self.power_imp = 0.0
 #        self.power_exp = 0.0
 #        self.power_load = 0.0
         self.energy = {
-            "prod" : 0.0,
-            "imp"  : 0.0,
-            "exp"  : 0.0,
-            "cons" : 0.0,
-            "s-cons" : 0.0
+            "prod": 0.0,
+            "imp": 0.0,
+            "exp": 0.0,
+            "cons": 0.0,
+            "s-cons": 0.0
         }
 #        self.energy_prod_delta = 0.0
 #        self.energy_imp_delta = 0.0
@@ -322,9 +323,11 @@ class InverterData():
                     float(self.inv_data['energy_total']*10 **
                           self.inv_data['energy_total_scale'])
                 self.energy["imp"] =  \
-                    float(self.meter_data['import_energy_active']*10**self.meter_data['energy_active_scale'])
+                    float(self.meter_data['import_energy_active']
+                          * 10**self.meter_data['energy_active_scale'])
                 self.energy["exp"] =  \
-                    float(self.meter_data['export_energy_active']*10**self.meter_data['energy_active_scale'])
+                    float(self.meter_data['export_energy_active']
+                          * 10**self.meter_data['energy_active_scale'])
 
     def write_ha(self, mqtt_ha, influx_ha):
         """
@@ -599,17 +602,19 @@ def main():
             s_d = solaredge_modbus.Inverter(
                 host=args.i, port=args.p, timeout=args.t, unit=args.u)
         else:
+            waitSeconds = SLEEP_TIME - \
+                (datetime.datetime.now().second % SLEEP_TIME)
+            energyTime = int(datetime.datetime.now().second / SLEEP_TIME) + 1
+            # logging.info("Sleeping for " + str(waitSeconds))
+            time.sleep(waitSeconds)
+
             retry = MAX_RETRIES
             # Read registers
             logging.debug("Reading data - cycle %s", counter)
             inv_data.update(s_d)
             inv_data.write_power(d_p)
-            if counter == 0:
+            if energyTime == 6:
                 inv_data.write_ha(m_d, d_d)
-                counter = 5
-            else:
-                counter -= 1
-            time.sleep(SLEEP_TIME)
     logging.error("Too many retries")
     rm_pid_file(pid_file)
     sys.exit(2)
