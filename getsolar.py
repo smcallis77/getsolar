@@ -160,6 +160,7 @@ MQTT_CLIENT_NAME = "getsolar.192.168.20.2"
 MQTT_HOST = "ha.smcallister.org"
 MQTT_PORT = "1883"
 MQTT_USER = "homecontrol"
+AUTODISCOVERY_PREFIX = "homeassistant"
 POWER_TOPIC = "house/solaredge/power/production"
 EXPORT_TOPIC = "house/solaredge/power/export"
 IMPORT_TOPIC = "house/solaredge/power/import"
@@ -236,6 +237,7 @@ class InverterData():
 
     def __init__(self):
 
+        self.new = True
         self.timestamp = ""
         self.power = {
             "prod": 0.0,
@@ -357,6 +359,365 @@ class InverterData():
         # Decode inverter status
         self.inv_data['status'] = solaredge_modbus.INVERTER_STATUS_MAP[self.inv_data['status']]
         if not DEBUG:
+
+            if self.new == True:
+                #       Write inverter discovery topic to Home Assistant
+                inverterUniqueIDPrefix = self.inv_data["c_model"] + \
+                    "-" + self.inv_data["c_serialnumber"]
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_cur_A" + "/" + "config"
+                inverterPayload = {
+                    "device": {
+                        "identifiers": [inverterUniqueIDPrefix],
+                        "manufacturer": "Solaredge",
+                        "model": self.inv_data["c_model"],
+                        "name": "Solaredge Inverter",
+                        "sw_version": self.inv_data["c_version"]
+                    },
+                    "icon": "mdi:signal",
+                    "name": "AC Cur A",
+                    "state_topic": INVERTER_TOPIC,
+                    "unique_id": inverterUniqueIDPrefix + "_AC_cur_A",
+                    "value_template": "{{ (value_json.l1_current * 10 ** value_json.current_scale)|round(2) }}",
+                    "unit_of_measurement": "A",
+                    "icon": "mdi:current-ac",
+                    "platform": "mqtt"
+                }
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_cur_B" + "/" + "config"
+                inverterPayload["name"] = "AC Cur B"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + "_AC_cur_B"
+                inverterPayload["value_template"] = "{{ (value_json.l2_current * 10 ** value_json.current_scale)|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "A"
+                inverterPayload["icon"] = "mdi:current-ac"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_cur_C" + "/" + "config"
+                inverterPayload["name"] = "AC Cur C"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + "_AC_cur_C"
+                inverterPayload["value_template"] = "{{ (value_json.l3_current * 10 ** value_json.current_scale)|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "A"
+                inverterPayload["icon"] = "mdi:current-ac"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_cur" + "/" + "config"
+                inverterPayload["name"] = "AC Cur"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + "_AC_cur"
+                inverterPayload["value_template"] = "{{ (value_json.current * 10 ** value_json.current_scale)|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "A"
+                inverterPayload["icon"] = "mdi:current-ac"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_Energy" + "/" + "config"
+                inverterPayload["name"] = "AC Energy"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_AC_Energy"
+                inverterPayload["value_template"] = "{{ (value_json.energy_total * 10 ** (value_json.energy_total_scale-6))|round(3) }}"
+                inverterPayload["unit_of_measurement"] = "MWh"
+                inverterPayload["icon"] = "mdi:electron-framework"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_Freq" + "/" + "config"
+                inverterPayload["name"] = "AC Frequency"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_AC_Freq"
+                inverterPayload["value_template"] = "{{ (value_json.frequency * 10 ** value_json.frequency_scale)|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "Hz"
+                inverterPayload["icon"] = "mdi:sine-wave"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_PF" + "/" + "config"
+                inverterPayload["name"] = "AC Power Factor"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_AC_PF"
+                inverterPayload["value_template"] = "{{ (value_json.power_factor * 10 ** value_json.power_factor_scale)|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "%"
+                inverterPayload["icon"] = "mdi:percent"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_Power" + "/" + "config"
+                inverterPayload["name"] = "AC Power"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_AC_Power"
+                inverterPayload["value_template"] = "{{ (value_json.power_ac * 10 ** (value_json.power_ac_scale-3))|round(3) }}"
+                inverterPayload["unit_of_measurement"] = "KW"
+                inverterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_VA" + "/" + "config"
+                inverterPayload["name"] = "AC VA"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_AC_VA"
+                inverterPayload["value_template"] = "{{ (value_json.power_apparent * 10 ** (value_json.power_apparent_scale-3))|round(3) }}"
+                inverterPayload["unit_of_measurement"] = "KVA"
+                inverterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_VAR" + "/" + "config"
+                inverterPayload["name"] = "AC VAR"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_AC_VAR"
+                inverterPayload["value_template"] = "{{ (value_json.power_reactive * 10 ** (value_json.power_reactive_scale-3))|round(3) }}"
+                inverterPayload["unit_of_measurement"] = "KVA"
+                inverterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_AC_Voltage" + "/" + "config"
+                inverterPayload["name"] = "AC Voltage"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_AC_Voltage"
+                inverterPayload["value_template"] = "{{ (value_json.l1_voltage * 10 ** (value_json.voltage_scale))|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "V"
+                inverterPayload["icon"] = "mdi:power-socket-au"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_DC_Current" + "/" + "config"
+                inverterPayload["name"] = "DC Current"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_DC_Current"
+                inverterPayload["value_template"] = "{{ (value_json.current_dc * 10 ** (value_json.current_dc_scale))|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "A"
+                inverterPayload["icon"] = "mdi:current-dc"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_DC_Power" + "/" + "config"
+                inverterPayload["name"] = "DC Power"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_DC_Power"
+                inverterPayload["value_template"] = "{{ (value_json.power_dc * 10 ** (value_json.power_dc_scale-3))|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "KW"
+                inverterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_DC_Voltage" + "/" + "config"
+                inverterPayload["name"] = "DC Voltage"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_DC_Voltage"
+                inverterPayload["value_template"] = "{{ (value_json.voltage_dc * 10 ** (value_json.voltage_dc_scale))|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "V"
+                inverterPayload["icon"] = "mdi:power-socket-au"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_Temperature" + "/" + "config"
+                inverterPayload["name"] = "Inverter Temperature"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_Temperature"
+                inverterPayload["value_template"] = "{{ (value_json.temperature * 10 ** (value_json.temperature_scale))|round(2) }}"
+                inverterPayload["unit_of_measurement"] = "°C"
+                inverterPayload["icon"] = "mdi:thermometer"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_Status" + "/" + "config"
+                inverterPayload["name"] = "Inverter Status"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_Status"
+                inverterPayload["value_template"] = "{{ (value_json.status) }}"
+                inverterPayload["unit_of_measurement"] = ""
+                inverterPayload["icon"] = "mdi:star-three-points"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + inverterUniqueIDPrefix + "_Vendor_Status" + "/" + "config"
+                inverterPayload["name"] = "Inverter Vendor Status"
+                inverterPayload["unique_id"] = inverterUniqueIDPrefix + \
+                    "_Vendor_Status"
+                inverterPayload["value_template"] = "{{ (value_json.vendor_status) }}"
+                inverterPayload["unit_of_measurement"] = ""
+                inverterPayload["icon"] = "mdi:star-three-points"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(inverterPayload))
+
+                #       Write meter discovery topic to Home Assistant
+                meterUniqueIDPrefix = self.meter_data["c_model"] + \
+                    "-" + self.meter_data["c_serialnumber"]
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_load" + "/" + "config"
+
+                meterPayload = {
+                    "device": {
+                        "identifiers": [meterUniqueIDPrefix],
+                        "manufacturer": "Solaredge",
+                        "model": self.meter_data["c_model"],
+                        "name": "Solaredge Meter",
+                        "sw_version": self.meter_data["c_version"]
+                    },
+                    "icon": "mdi:solar-power",
+                    "name": "Meter Load",
+                    "state_topic": LOAD_TOPIC,
+                    "unique_id": meterUniqueIDPrefix + "_load",
+                    "unit_of_measurement": "kW",
+                    "platform": "mqtt"
+                }
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_production" + "/" + "config"
+                meterPayload["name"] = "Meter Production"
+                meterPayload["state_topic"] = POWER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + "_production"
+                meterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_import" + "/" + "config"
+                meterPayload["name"] = "Meter Import"
+                meterPayload["state_topic"] = IMPORT_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + "_import"
+                meterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_export" + "/" + "config"
+                meterPayload["name"] = "Meter Export"
+                meterPayload["state_topic"] = EXPORT_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + "_export"
+                meterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_current" + "/" + "config"
+                meterPayload["name"] = "Meter Current"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + "_current"
+                meterPayload["value_template"] = "{{ (value_json.current * 10 ** value_json.current_scale)|round(2) }}"
+                meterPayload["unit_of_measurement"] = "A"
+                meterPayload["icon"] = "mdi:current-ac"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_line_voltage" + "/" + "config"
+                meterPayload["name"] = "Meter Line Voltage"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_line_voltage"
+                meterPayload["value_template"] = "{{ (value_json.voltage_ln * 10 ** (value_json.voltage_scale))|round(2) }}"
+                meterPayload["unit_of_measurement"] = "V"
+                meterPayload["icon"] = "mdi:power-socket-au"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_frequency" + "/" + "config"
+                meterPayload["name"] = "Meter Frequency"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_frequency"
+                meterPayload["value_template"] = "{{ (value_json.frequency * 10 ** value_json.frequency_scale)|round(2) }}"
+                meterPayload["unit_of_measurement"] = "Hz"
+                meterPayload["icon"] = "mdi:sine-wave"
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_real_power" + "/" + "config"
+                meterPayload["name"] = "Meter Real Power"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_frequency"
+                meterPayload["value_template"] = "{{ (value_json.power * 10 ** (value_json.power_scale))|round(3) }}"
+                meterPayload["unit_of_measurement"] = "W"
+                meterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_power_apparent" + "/" + "config"
+                meterPayload["name"] = "Meter Apparent Power"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_power_apparent"
+                meterPayload["value_template"] = "{{ (value_json.power_apparent * 10 ** (value_json.power_apparent_scale))|round(3) }}"
+                meterPayload["unit_of_measurement"] = "VA"
+                meterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_power_reactive" + "/" + "config"
+                meterPayload["name"] = "Meter Reactive Power"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_power_reactive"
+                meterPayload["value_template"] = "{{ (value_json.power_reactive * 10 ** (value_json.power_reactive_scale))|round(3) }}"
+                meterPayload["unit_of_measurement"] = "VA"
+                meterPayload["icon"] = "mdi:solar-power"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_power_factor" + "/" + "config"
+                meterPayload["name"] = "Meter Power Factor"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_power_factor"
+                meterPayload["value_template"] = "{{ (value_json.power_factor * 10 ** value_json.power_factor_scale)|round(2) }}"
+                meterPayload["unit_of_measurement"] = "%"
+                meterPayload["icon"] = "mdi:percent"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_lifetime_energy_export" + "/" + "config"
+                meterPayload["name"] = "Meter Lifetime Energy Export"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_lifetime_energy_export"
+                meterPayload["value_template"] = "{{ (value_json.export_energy_active * 10 ** (value_json.energy_active_scale-6))|round(3) }}"
+                meterPayload["unit_of_measurement"] = "MWh"
+                meterPayload["icon"] = "mdi:electron-framework"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                discoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
+                    "sensor" + "/" + meterUniqueIDPrefix + "_lifetime_energy_import" + "/" + "config"
+                meterPayload["name"] = "Meter Lifetime Energy Import"
+                meterPayload["state_topic"] = METER_TOPIC
+                meterPayload["unique_id"] = meterUniqueIDPrefix + \
+                    "_lifetime_energy_import"
+                meterPayload["value_template"] = "{{ (value_json.import_energy_active * 10 ** (value_json.energy_active_scale-6))|round(3) }}"
+                meterPayload["unit_of_measurement"] = "MWh"
+                meterPayload["icon"] = "mdi:electron-framework"
+
+                mqtt_ha.publish(discoveryTopic, json.dumps(meterPayload))
+
+                self.new = False
+
             logging.debug("Writing energy points")
             mqtt_ha.publish(POWER_TOPIC, self.power["prod"]/1000)
             mqtt_ha.publish(EXPORT_TOPIC, self.power["exp"]/1000)
