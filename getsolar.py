@@ -393,7 +393,7 @@ class InverterData():
         # Sensor 1 - AC Current Phase A
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_cur_A" + "/" + "config"
-        self.inverterPayload["name"] = "AC Cur A"
+        self.inverterPayload["name"] = "Inverter AC Current A"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + "_AC_cur_A"
         self.inverterPayload["value_template"] = "{{ (value_json.l1_current * 10 ** value_json.current_scale)|round(2) }}"
@@ -407,7 +407,7 @@ class InverterData():
         # Sensor 2 - AC Current Phase B
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_cur_B" + "/" + "config"
-        self.inverterPayload["name"] = "AC Cur B"
+        self.inverterPayload["name"] = "Inverter AC Current B"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + "_AC_cur_B"
         self.inverterPayload["value_template"] = "{{ (value_json.l2_current * 10 ** value_json.current_scale)|round(2) }}"
@@ -421,7 +421,7 @@ class InverterData():
         # Sensor 3 - AC Current Phase C
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_cur_C" + "/" + "config"
-        self.inverterPayload["name"] = "AC Cur C"
+        self.inverterPayload["name"] = "Inverter AC Current C"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + "_AC_cur_C"
         self.inverterPayload["value_template"] = "{{ (value_json.l3_current * 10 ** value_json.current_scale)|round(2) }}"
@@ -435,7 +435,7 @@ class InverterData():
         # Sensor 4 - AC Current
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_cur" + "/" + "config"
-        self.inverterPayload["name"] = "AC Cur"
+        self.inverterPayload["name"] = "Inverter AC Current"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + "_AC_cur"
         self.inverterPayload["value_template"] = "{{ (value_json.current * 10 ** value_json.current_scale)|round(2) }}"
@@ -449,7 +449,7 @@ class InverterData():
         # Sensor 5 - Lifetime Energy
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_Energy" + "/" + "config"
-        self.inverterPayload["name"] = "AC Energy"
+        self.inverterPayload["name"] = "Inverter Lifetime Energy"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_AC_Energy"
@@ -464,7 +464,7 @@ class InverterData():
         # Sensor 6 -
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_Freq" + "/" + "config"
-        self.inverterPayload["name"] = "AC Frequency"
+        self.inverterPayload["name"] = "Inverter Frequency"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_AC_Freq"
@@ -479,7 +479,7 @@ class InverterData():
         # Sensor 7 - Power Factor
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_PF" + "/" + "config"
-        self.inverterPayload["name"] = "AC Power Factor"
+        self.inverterPayload["name"] = "Inverter Power Factor"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_AC_PF"
@@ -495,7 +495,7 @@ class InverterData():
         # Sensor 8 - AC Power
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_Power" + "/" + "config"
-        self.inverterPayload["name"] = "AC Power"
+        self.inverterPayload["name"] = "Inverter Power"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_AC_Power"
@@ -511,7 +511,7 @@ class InverterData():
         # Sensor 9 - Apparent Power
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_VA" + "/" + "config"
-        self.inverterPayload["name"] = "AC VA"
+        self.inverterPayload["name"] = "Inverter Apparent Power"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_AC_VA"
@@ -527,7 +527,7 @@ class InverterData():
         # Sensor 10 Reactive Power
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_VAR" + "/" + "config"
-        self.inverterPayload["name"] = "AC VAR"
+        self.inverterPayload["name"] = "Inverter Reactive Power"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_AC_VAR"
@@ -543,7 +543,7 @@ class InverterData():
         # Sensor 11 - AC Voltage
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_AC_Voltage" + "/" + "config"
-        self.inverterPayload["name"] = "AC Voltage"
+        self.inverterPayload["name"] = "Inverter AC Voltage"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_AC_Voltage"
@@ -559,7 +559,7 @@ class InverterData():
         # Sensor 12 - DC Current
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_DC_Current" + "/" + "config"
-        self.inverterPayload["name"] = "DC Current"
+        self.inverterPayload["name"] = "Inverter DC Current"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_DC_Current"
@@ -575,7 +575,7 @@ class InverterData():
         # Sensor 13 - DC Power
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_DC_Power" + "/" + "config"
-        self.inverterPayload["name"] = "DC Power"
+        self.inverterPayload["name"] = "Inverter DC Power"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_DC_Power"
@@ -591,7 +591,7 @@ class InverterData():
         # Sensor 14 - DC Voltage
         self.inverterDiscoveryTopic = AUTODISCOVERY_PREFIX + "/" + \
             "sensor" + "/" + self.inverterUniqueIDPrefix + "_DC_Voltage" + "/" + "config"
-        self.inverterPayload["name"] = "DC Voltage"
+        self.inverterPayload["name"] = "Inverter DC Voltage"
         self.inverterPayload["state_topic"] = INVERTER_TOPIC
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_DC_Voltage"
