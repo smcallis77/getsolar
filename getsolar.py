@@ -1161,8 +1161,9 @@ def main():
                 inv_data.ha_discovery(m_d)
                 firstRun = False
             inv_data.write_power(d_p)
-            if energyTime == 6:
-                inv_data.write_ha(m_d, d_d)
+            inv_data.write_ha(m_d, d_d)
+#            if energyTime == 6:
+#            modified to write power data to HA faster
     logging.error("Too many retries")
     rm_pid_file(pid_file)
     sys.exit(2)
