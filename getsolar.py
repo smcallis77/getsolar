@@ -15,7 +15,7 @@ import time
 import datetime
 import os
 import sys
-VERSION = 'v1.3.0'
+VERSION = 'v1.3.1'
 
 """
   Copyright (c) 2018, Steve McAllister
@@ -173,7 +173,7 @@ INFLUX_USER = 'telegraf'
 INFLUX_DB_ALL = 'solar'
 INFLUX_DB_POWER = 'solar'
 INFLUX_HOST = 'ha.smcallister.org'
-INFLUX_PORT = 8086
+INFLUX_PORT = "8086"
 INFLUX_DOMAIN = 'solaredge'
 INFLUX_ENTITY = 'meters'
 INFLUX_PASSWORD = ''
@@ -1064,7 +1064,7 @@ def main():
     try:
         pid_file = os.environ['PIDFILE']
     except:
-        pid_file = "null"
+        pid_file = "UNDEFINED"
 
     args = parse_args()
 
@@ -1077,13 +1077,15 @@ def main():
     else:
         DEBUG = False
         set_logging('info')
-        if os.path.exists(pid_file):
-            logging.error("PID already exists. Is getsolar already running?")
-            logging.error(
-                "Either, stop the running process or remove %s or run with the debug flag set (-D)", pid_file)
-            sys.exit(2)
-        else:
-            write_pid_file(pid_file)
+        if pid_file != "UNDEFINED":
+            if os.path.exists(pid_file):
+                logging.error(
+                    "PID already exists. Is getsolar already running?")
+                logging.error(
+                    "Either, stop the running process or remove %s or run with the debug flag set (-D)", pid_file)
+                sys.exit(2)
+            else:
+                write_pid_file(pid_file)
 
     # Connect to MQTT
 
