@@ -15,6 +15,7 @@ import time
 import datetime
 import os
 import sys
+
 VERSION = 'v1.3.1'
 
 """
@@ -189,7 +190,7 @@ SLEEP_TIME = 10
 WAIT_TIME = 1
 MAX_RETRIES = 5
 MAX_COUNTER = 5
-#PID_FILE = '/var/run/getsolar/getsolar.pid'
+# PID_FILE = '/var/run/getsolar/getsolar.pid'
 DEBUG = False
 
 
@@ -633,10 +634,10 @@ class InverterData():
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "Inv_Status"
         self.inverterPayload["value_template"] = "{{ value_json.status }}"
-        #self.inverterPayload["unit_of_measurement"] = None
+        # self.inverterPayload["unit_of_measurement"] = None
         self.inverterPayload["icon"] = "mdi:star-three-points"
-        #self.inverterPayload["device_class"] = None
-        #self.inverterPayload["state_class"] = None
+        # self.inverterPayload["device_class"] = None
+        # self.inverterPayload["state_class"] = None
 
         mqtt_ha.publish(self.inverterDiscoveryTopic,
                         json.dumps(self.inverterPayload), retain=True)
@@ -649,10 +650,10 @@ class InverterData():
         self.inverterPayload["unique_id"] = self.inverterUniqueIDPrefix + \
             "_Vendor_Stat"
         self.inverterPayload["value_template"] = "{{ value_json.vendor_status }}"
-        #self.inverterPayload["unit_of_measurement"] = None
+        # self.inverterPayload["unit_of_measurement"] = None
         self.inverterPayload["icon"] = "mdi:star-three-points"
-        #self.inverterPayload["device_class"] = None
-        #self.inverterPayload["state_class"] = None
+        # self.inverterPayload["device_class"] = None
+        # self.inverterPayload["state_class"] = None
 
         mqtt_ha.publish(self.inverterDiscoveryTopic,
                         json.dumps(self.inverterPayload), retain=True)

@@ -4,6 +4,7 @@
 # you need to make the PIDFILE dir and ensure it has the right permissions
 PIDFILE="/tmp/getsolar.pid"
 export PIDFILE
+PYTHON="/home/steve/projects/getsolar/.venv/bin/python"
 RUNFILE="/usr/local/bin/getsolar.py"
 DEVICE_ADDRESS="solaredge.smcallister.org"
 #DEVICE_ADDRESS="localhost"
@@ -23,9 +24,9 @@ start()
     fi
  fi
  if [ $DEBUG ] ; then
-   $RUNFILE -D -i $DEVICE_ADDRESS
+   $PYTHON $RUNFILE -D -i $DEVICE_ADDRESS
  else
-   $RUNFILE -i $DEVICE_ADDRESS
+   $PYTHON $RUNFILE -i $DEVICE_ADDRESS
  fi
  exit $?
     
